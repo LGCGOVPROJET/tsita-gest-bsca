@@ -1,0 +1,17 @@
+# Secrets et artefacts locaux — ne jamais versionner.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+**/storage/logs/*.log
+**/node_modules/
+.DS_Store
+
+# Configuration locale (chemins absolus du poste) et artefacts de build
+.claude/
+frontend/dist/
+**/coverage/
+**/.phpunit.cache/
+**/storage/app/private/**
+!**/storage/app/private/.gitignore

@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guide TSITA GEST</title>
+  <meta name="description" content="Guide utilisateur interactif de TSITA GEST pour BSCA Bank : parcours pas à pas, écrans commentés, cycle de vie d'un dossier, simulateur de délais, indicateurs, rôles et installation.">
+  <meta name="theme-color" content="#102F50">
+  <link rel="icon" type="image/png" href="assets/bsca-mark.png">
+  <!-- Polices facultatives : en l'absence de réseau, repli automatique sur Arial. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&family=Manrope:wght@600;700;800&display=swap">
+  <link rel="stylesheet" href="css/guide.css">
+  <script>
+    /* Applique le thème mémorisé avant l'affichage (évite le flash). */
+    (function () { try { var t = localStorage.getItem('tg-guide-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {} })();
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Aller au contenu</a>
+
+  <div class="app">
+    <!-- ================= Barre latérale ================= -->
+    <aside class="side" id="sidebar" aria-label="Navigation du guide">
+      <a class="brand" href="#accueil" aria-label="TSITA GEST pour BSCA Bank — accueil du guide">
+        <img src="assets/bsca-mark.png" alt="" width="40" height="40">
+        <div><strong>TSITA GEST</strong><small>Guide · BSCA Bank</small></div>
+      </a>
+      <nav aria-label="Sections du guide">
+        <div class="side-title" id="nav-guide">Guide</div>
+        <ul class="nav-list" aria-labelledby="nav-guide" id="navMain"></ul>
+        <div class="side-title" id="nav-ref">Référence</div>
+        <ul class="nav-list" aria-labelledby="nav-ref" id="navRef"></ul>
+        <div class="side-title" id="nav-it">Équipes IT</div>
+        <ul class="nav-list" aria-labelledby="nav-it" id="navIt"></ul>
+      </nav>
+      <div class="side-footer">
+        <b>Données fictives</b><br>
+        Aucun dossier, client ni chiffre réel. Seuils de délai : valeurs de démonstration à valider par la conformité BSCA.
+      </div>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <div class="workspace">
+      <!-- ================= Bandeau ================= -->
+      <header class="top">
+        <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="Ouvrir le menu" aria-controls="sidebar" aria-expanded="false">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <a class="logo-plate" href="#accueil" aria-label="Accueil du guide">
+          <img src="assets/bsca-wide.png" alt="BSCA Bank — Banque Sino-Congolaise pour l'Afrique" width="181" height="46">
+        </a>
+        <div class="search" role="search">
+          <label for="q" class="sr-only">Rechercher dans le guide</label>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Rechercher : délai, réouverture, stock…"
+                 role="combobox" aria-expanded="false" aria-controls="qResults" aria-autocomplete="list" aria-describedby="qHelp">
+          <kbd aria-hidden="true">/</kbd>
+          <span id="qHelp" class="sr-only">Raccourci : touche barre oblique. Flèches haut et bas pour parcourir, Entrée pour ouvrir.</span>
+          <div class="search-results" id="qResults" role="listbox" aria-label="Résultats de recherche" hidden></div>
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn" id="themeBtn" type="button" aria-pressed="false" aria-label="Activer le mode sombre">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+          </button>
+          <button class="icon-btn" id="printBtn" type="button" aria-label="Imprimer cette page">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><path d="M7 14h10v7H7z"/></svg>
+          </button>
+          <a class="profile-pill" id="profilePill" href="#accueil/profil">
+            <span class="avatar" id="profileAvatar" aria-hidden="true">?</span>
+            <span class="ptxt" id="profileLabel">Choisir un profil</span>
+          </a>
+        </div>
+      </header>
+
+      <main class="content" id="main" tabindex="-1">
+        <div class="print-head" aria-hidden="true"><img src="assets/bsca-wide.png" alt=""><div><b>TSITA GEST × BSCA Bank — Guide utilisateur</b><br><span class="small">Données fictives · seuils de démonstration à valider par la conformité BSCA</span></div></div>
+        <nav class="crumbs" aria-label="Fil d'Ariane"><ol id="crumbs"></ol></nav>
+
+        <!-- ============ ACCUEIL ============ -->
+        <section class="page" id="page-accueil" data-title="Accueil" aria-labelledby="h-accueil">
+          <div class="hero">
+            <div class="eyebrow">TSITA GEST × BSCA Bank · Guide interactif</div>
+            <h1 id="h-accueil">Chaque demande mérite une réponse claire.</h1>
+            <p>TSITA GEST est la plateforme de gestion des réclamations de BSCA Bank, Banque Sino-Congolaise pour l'Afrique. Elle relie le dépôt multicanal, l'instruction par les équipes, la solution, la réponse au client et la mesure des causes récurrentes — avec une trace complète de chaque décision.</p>
+            <div class="hero-row">
+              <a class="btn" href="#accueil/profil">Choisir mon profil</a>
+              <a class="btn alt" href="#cycle">Voir le cycle d'un dossier</a>
+            </div>
+            <div class="hero-meta" aria-label="Le guide en chiffres">
+              <span><b>13</b>parcours pas à pas</span>
+              <span><b>11</b>statuts expliqués</span>
+              <span><b>8</b>profils couverts</span>
+              <span><b>4</b>écrans commentés</span>
+            </div>
+          </div>
+
+          <div class="warnbox" role="note">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg>
+            <div><b>Guide de démonstration.</b> Toutes les données affichées (références, clients, montants, indicateurs) sont fictives. Les seuils de délai (accusé de réception en 10 jours ouvrés, réponse en 45 jours calendaires) sont des valeurs de démonstration à valider par la conformité BSCA avant toute mise en production.</div>
+          </div>
+
+          <div class="section-title" id="profil"><h2 id="h-profil">Qui êtes-vous ?</h2><span class="muted small">Le guide met en avant les parcours et modules utiles à votre rôle. Choix mémorisé sur cet appareil.</span></div>
+          <div class="profiles" id="profiles" role="group" aria-labelledby="h-profil"></div>
+
+          <div id="recoZone" class="mt3"></div>
+
+          <div class="section-title"><h2>Explorer le guide</h2></div>
+          <div class="quick" id="quickLinks"></div>
+        </section>
+
+        <!-- ============ PARCOURS (liste) ============ -->
+        <section class="page" id="page-parcours" data-title="Parcours pas à pas" aria-labelledby="h-parcours" hidden>
+          <div class="eyebrow">Apprendre en faisant</div>
+          <div class="heading">
+            <div><h1 id="h-parcours">Parcours pas à pas</h1>
+            <p class="sub">Treize parcours guidés couvrent le traitement d'une réclamation de bout en bout. Cochez « J'ai compris » à chaque étape : votre progression est conservée sur cet appareil.</p></div>
+            <button class="btn alt" type="button" id="resetProgress">Réinitialiser ma progression</button>
+          </div>
+          <div class="chips mb0" id="journeyFilter" role="group" aria-label="Filtrer les parcours par profil"></div>
+          <div class="journey-cards mt2" id="journeyList"></div>
+        </section>
+
+        <!-- ============ PARCOURS (détail / stepper) ============ -->
+        <section class="page" id="page-parcours-detail" data-title="Parcours" aria-labelledby="h-journey" hidden>
+          <div id="journeyDetail"></div>
+        </section>
+
+        <!-- ============ ÉCRANS COMMENTÉS ============ -->
+        <section class="page" id="page-ecrans" data-title="Écrans commentés" aria-labelledby="h-ecrans" hidden>
+          <div class="eyebrow">Se repérer dans l'application</div>
+          <div class="heading"><div><h1 id="h-ecrans">Écrans commentés</h1>
+          <p class="sub">Reproductions simplifiées des écrans de TSITA GEST. Cliquez sur les pastilles numérotées (ou utilisez la liste) pour comprendre chaque zone.</p></div></div>
+          <div class="tabs" role="tablist" aria-label="Écrans" id="screenTabs"></div>
+          <div id="screenPanel" role="tabpanel"></div>
+        </section>
+
+        <!-- ============ CYCLE DE VIE ============ -->
+        <section class="page" id="page-cycle" data-title="Cycle de vie d'un dossier" aria-labelledby="h-cycle" hidden>
+          <div class="eyebrow">Statuts et transitions</div>
+          <div class="heading"><div><h1 id="h-cycle">Cycle de vie d'un dossier</h1>
+          <p class="sub">Onze statuts de traitement et leurs transitions autorisées par le serveur. Chaque transition est horodatée, motivée et journalisée. Survolez ou sélectionnez un statut pour voir qui peut agir et ce que voit le client.</p></div>
+          <div class="chips" role="group" aria-label="Libellés affichés">
+            <button class="chip" type="button" id="lcInternal" aria-pressed="true">Vue interne</button>
+            <button class="chip" type="button" id="lcClient" aria-pressed="false">Vue client</button>
+          </div></div>
+          <div class="lc-wrap">
+            <div class="card">
+              <div id="lcSvg"></div>
+              <div class="lc-legend" aria-hidden="true">
+                <span><svg viewBox="0 0 34 10"><path d="M0 5h30" stroke="currentColor" stroke-width="2"/></svg>Transition vers l'avant</span>
+                <span><svg viewBox="0 0 34 10"><path d="M0 5h30" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4"/></svg>Retour arrière</span>
+                <span><svg viewBox="0 0 34 10"><rect x="1" y="1" width="30" height="8" rx="3" fill="none" stroke="#D9132C" stroke-width="2"/></svg>Statut sélectionné</span>
+                <span><svg viewBox="0 0 34 10"><rect x="1" y="1" width="30" height="8" rx="3" fill="none" stroke="#11734D" stroke-width="2" stroke-dasharray="4 2"/></svg>Statut suivant possible</span>
+              </div>
+            </div>
+            <div class="card lc-detail" id="lcDetail" aria-live="polite"></div>
+          </div>
+          <div class="grid g2 mt2">
+            <div class="card">
+              <h2>La décision de fond est une dimension distincte</h2>
+              <p>Le <b>statut</b> dit où en est le traitement ; la <b>décision</b> dit si la réclamation est fondée. Un dossier « Réponse envoyée » peut être « Non fondé » ; un dossier « Clôturé » peut être « Partiellement fondé ». La décision est préparée dans la solution, approuvée, puis copiée sur le dossier à l'envoi de la réponse.</p>
+              <div class="chips" aria-label="Décisions possibles">
+                <span class="badge ok"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>Fondée</span>
+                <span class="badge info"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>Partiellement fondée</span>
+                <span class="badge neutral"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>Non fondée</span>
+                <span class="badge warn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>Irrecevable motivée</span>
+              </div>
+            </div>
+            <div class="card">
+              <h2>Règles communes à toutes les transitions</h2>
+              <ul>
+                <li>Un <b>motif écrit</b> est obligatoire (sauf transitions automatiques).</li>
+                <li>Chaque transition crée un événement de chronologie et une entrée d'audit, <b>jamais modifiés ni supprimés</b>.</li>
+                <li>Aucun dossier déposé ne peut être supprimé par un profil métier : un doublon est <b>marqué</b>, pas effacé.</li>
+                <li>La réouverture crée un <b>dossier enfant</b> ; l'ancien dossier et sa réponse restent consultables.</li>
+                <li>Le client voit un <b>statut simplifié</b>, jamais le statut interne brut.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ SIMULATEUR DE DÉLAIS ============ -->
+        <section class="page" id="page-delais" data-title="Simulateur de délais" aria-labelledby="h-delais" hidden>
+          <div class="eyebrow">Moteur de délais</div>
+          <div class="heading"><div><h1 id="h-delais">Simulateur de délais</h1>
+          <p class="sub">Choisissez une date de réception : le simulateur applique les mêmes règles que le service <code>DeadlineCalculator</code> (fuseau Africa/Brazzaville, jours fériés CG 2025–2027, week-ends, jour de réception non compté).</p></div></div>
+          <div class="warnbox" role="note">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg>
+            <div><b>Règles de démonstration à valider par la conformité BSCA.</b> Accusé : 10 jours ouvrés · Réponse finale : 45 jours calendaires · Pré-alerte interne : 5 jours ouvrés avant l'échéance finale. Ces seuils ne constituent pas un engagement de BSCA.</div>
+          </div>
+          <div class="card">
+            <form class="sim-form" id="simForm" novalidate>
+              <label class="field">Date de réception
+                <input type="date" id="simDate" min="2025-01-01" max="2027-10-31" required aria-describedby="simDateHint">
+                <span class="hint" id="simDateHint">Entre le 1er janvier 2025 et le 31 octobre 2027.</span>
+              </label>
+              <label class="field">Heure de réception (Brazzaville)
+                <input type="time" id="simTime" value="10:30">
+                <span class="hint">L'heure n'influence pas le calcul (jour J non compté).</span>
+              </label>
+              <div class="field"><span>Afficher</span>
+                <label class="row" style="font-weight:600;color:var(--ink)"><input type="checkbox" id="simDetail" checked style="width:18px;height:18px"> le détail jour par jour</label>
+                <span class="hint">Montre les jours comptés et sautés.</span>
+              </div>
+            </form>
+            <div class="presets" role="group" aria-label="Cas de test">
+              <span class="small muted" style="align-self:center">Cas de test :</span>
+            </div>
+            <p id="simError" class="dangerbox" role="alert" hidden></p>
+          </div>
+          <div id="simOut" aria-live="polite"></div>
+          <div class="card mt2">
+            <h2>Jours fériés de démonstration (République du Congo)</h2>
+            <p class="small muted">Calendrier <code>CG-demo-2025-2027</code> — dates mobiles calculées à partir de Pâques. Liste à confirmer par BSCA (décrets annuels, jours fériés exceptionnels).</p>
+            <div class="hol-years" id="holList"></div>
+          </div>
+        </section>
+
+        <!-- ============ INDICATEURS ============ -->
+        <section class="page" id="page-indicateurs" data-title="Indicateurs" aria-labelledby="h-kpi" hidden>
+          <div class="eyebrow">Glossaire du pilotage</div>
+          <div class="heading"><div><h1 id="h-kpi">Indicateurs : définitions et calculs</h1>
+          <p class="sub">Chaque indicateur de TSITA GEST affiche sa période, sa date de calcul et sa définition. Tous partagent les mêmes filtres : période, agence de réception, entité de traitement, nature, produit, canal, statut.</p></div></div>
+          <div class="kpi-glossary" id="kpiGlossary"></div>
+
+          <div class="section-title"><h2 id="h-recon">Réconciliation du stock</h2><span class="small muted">Exemple fictif · septembre 2026 · calcul au 30/09/2026</span></div>
+          <div class="card">
+            <p>Le rapport d'activité vérifie que le stock se reconstitue : <b>stock de début (veille de la période) + entrées − réponses finales ± ajustements justifiés = stock de fin</b>. Si l'égalité n'est pas vérifiée, le champ <code>balanced</code> vaut <code>false</code> et l'écart doit être expliqué.</p>
+            <div class="recon" role="img" aria-label="58 plus 128 moins 94 moins 2 égale 90">
+              <div class="term"><b>58</b><span>Stock au 31/08</span></div><div class="op" aria-hidden="true">+</div>
+              <div class="term"><b>128</b><span>Entrées</span></div><div class="op" aria-hidden="true">−</div>
+              <div class="term"><b>94</b><span>Réponses finales</span></div><div class="op" aria-hidden="true">−</div>
+              <div class="term"><b>2</b><span>Ajustements*</span></div><div class="op" aria-hidden="true">=</div>
+              <div class="term total"><b>90</b><span>Stock au 30/09</span></div>
+            </div>
+            <p class="small muted">* Deux doublons marqués (sans suppression), justifiés dans l'audit. Réconciliation : <span class="badge ok"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>balanced = true</span></p>
+          </div>
+
+          <div class="section-title"><h2 id="h-exo">Exercice : pourquoi « reçues » et « réponses » diffèrent</h2></div>
+          <div class="card" id="exercise"></div>
+        </section>
+
+        <!-- ============ RÔLES ============ -->
+        <section class="page" id="page-roles" data-title="Rôles et droits" aria-labelledby="h-roles" hidden>
+          <div class="eyebrow">Contrôle d'accès</div>
+          <div class="heading"><div><h1 id="h-roles">Matrice des rôles et droits</h1>
+          <p class="sub">Huit profils, un périmètre chacun. Les règles sont appliquées <b>côté serveur</b> (politiques et périmètres) : l'interface masque seulement les boutons non autorisés.</p></div></div>
+          <div class="filters" id="roleFilters">
+            <label class="field">Filtrer les droits
+              <input type="search" id="permSearch" placeholder="Ex. export, valider, pièces…">
+            </label>
+            <label class="field">Profil mis en évidence
+              <select id="roleSelect"></select>
+            </label>
+            <label class="field">Domaine
+              <select id="domainSelect"></select>
+            </label>
+            <span class="filter-note" id="permCount" aria-live="polite"></span>
+          </div>
+          <div class="card">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Matrice des droits (défilement horizontal possible)">
+              <table class="table matrix" id="matrix"></table>
+            </div>
+            <div class="legend-row">
+              <span><span class="badge ok"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>Oui</span> Autorisé dans son périmètre</span>
+              <span><span class="badge warn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v16"/></svg>Partiel</span> Restreint (voir la note)</span>
+              <span><span class="badge neutral"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>Non</span> Non autorisé</span>
+            </div>
+          </div>
+          <div class="section-title"><h2>Périmètres par défaut</h2></div>
+          <div class="grid g2" id="scopes"></div>
+          <p class="small muted mt2">Matrice de référence fonctionnelle. La source de vérité technique est la liste de permissions renvoyée par <code>GET /api/v1/auth/me</code> et définie dans les seeders du back-end.</p>
+        </section>
+
+        <!-- ============ INSTALLATION ============ -->
+        <section class="page" id="page-installation" data-title="Installation technique" aria-labelledby="h-install" hidden>
+          <div class="eyebrow">Équipes IT</div>
+          <div class="heading"><div><h1 id="h-install">Guide d'installation technique</h1>
+          <p class="sub">Mise en route locale de l'environnement de démonstration : API Laravel, application React et base MySQL. Environnement fictif, sans connexion aux systèmes BSCA.</p></div></div>
+
+          <div class="section-title"><h2>1. Prérequis</h2></div>
+          <div class="req">
+            <div class="card"><b>PHP 8.3+</b><span>avec extensions pdo_mysql, mbstring, openssl, intl, fileinfo, zip</span></div>
+            <div class="card"><b>Composer 2</b><span>gestionnaire de dépendances PHP</span></div>
+            <div class="card"><b>Node.js 20+</b><span>avec npm 10+ pour le front-end</span></div>
+            <div class="card"><b>MySQL 8+</b><span>127.0.0.1:3306 · utilisateur root sans mot de passe (local uniquement)</span></div>
+          </div>
+
+          <div class="section-title"><h2>2. Base de données</h2></div>
+          <div class="card">
+            <p>Créez les deux bases (application et tests). Les scripts de référence se trouvent dans <code>base-de-donnees/</code> (<code>schema.sql</code>, <code>donnees-demo.sql</code>, dictionnaire et MCD). En temps normal, les migrations Laravel suffisent.</p>
+            <div class="code"><code><span class="c"># Créer les bases (utf8mb4)</span>
+mysql -u root -e "CREATE DATABASE tsita_gest CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -u root -e "CREATE DATABASE tsita_gest_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+<span class="c"># Variante sans Laravel : charger les scripts SQL fournis</span>
+mysql -u root tsita_gest &lt; base-de-donnees/schema.sql
+mysql -u root tsita_gest &lt; base-de-donnees/donnees-demo.sql</code></div>
+          </div>
+
+          <div class="section-title"><h2>3. Back-end (API Laravel)</h2></div>
+          <div class="card">
+            <ol class="install-steps">
+              <li><b>Installer les dépendances</b><div class="code"><code>cd backend
+composer install</code></div></li>
+              <li><b>Configurer l'environnement</b> — vérifier <code>DB_DATABASE=tsita_gest</code>, <code>APP_TIMEZONE</code> (stockage UTC, affichage Africa/Brazzaville), <code>SANCTUM_STATEFUL_DOMAINS=localhost:5173,127.0.0.1:5173</code> et <code>APP_DEMO_MODE=true</code>.<div class="code"><code>cp .env.example .env
+php artisan key:generate</code></div></li>
+              <li><b>Créer le schéma et le jeu fictif</b> (≈ 240 réclamations sur 12 mois, comptes de démonstration, règles de délai de démonstration, jours fériés CG 2025–2027).<div class="code"><code>php artisan migrate --seed</code></div></li>
+              <li><b>Lancer l'API</b> — disponible sur <code>http://127.0.0.1:8000/api/v1</code>.<div class="code"><code>php artisan serve --port=8000</code></div></li>
+            </ol>
+          </div>
+
+          <div class="section-title"><h2>4. Front-end (React + Vite)</h2></div>
+          <div class="card">
+            <ol class="install-steps">
+              <li><b>Installer les dépendances</b><div class="code"><code>cd frontend
+npm install</code></div></li>
+              <li><b>Lancer le serveur de développement</b> — Vite relaie <code>/api</code> et <code>/sanctum</code> vers <code>http://127.0.0.1:8000</code> (même origine, cookies Sanctum).<div class="code"><code>npm run dev</code></div></li>
+              <li><b>Ouvrir l'application</b> : <a href="http://localhost:5173" rel="noopener">http://localhost:5173</a></li>
+            </ol>
+          </div>
+
+          <div class="section-title"><h2>5. Comptes de démonstration</h2><span class="small muted">Données fictives uniquement · mot de passe à changer hors démonstration</span></div>
+          <div class="card">
+            <div class="info" role="note"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg><div>Mot de passe commun de démonstration : <code id="demoPwd">Bsca@Demo2026!</code> <button class="copy-btn inline" type="button" data-copy="#demoPwd" aria-label="Copier le mot de passe de démonstration"><svg class="icon sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button></div></div>
+            <div class="table-wrap">
+              <table class="table stack-sm" id="accounts">
+                <caption>Huit comptes, un par rôle</caption>
+                <thead><tr><th scope="col">Adresse</th><th scope="col">Rôle</th><th scope="col">Périmètre de démonstration</th><th scope="col"><span class="sr-only">Copier</span></th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-title"><h2>6. Tests</h2></div>
+          <div class="grid g2">
+            <div class="card"><h3>Back-end</h3><p class="small muted">Base <code>tsita_gest_test</code>. Couvre notamment le moteur de délais (fin de mois, jour férié, week-end, réponse le jour même, fin d'année, réouverture) et les droits d'accès.</p><div class="code"><code>cd backend
+php artisan test</code></div></div>
+            <div class="card"><h3>Front-end</h3><p class="small muted">Tests de composants et d'accessibilité.</p><div class="code"><code>cd frontend
+npm test</code></div></div>
+          </div>
+
+          <div class="section-title"><h2>7. Dépannage</h2></div>
+          <div id="installFaq"></div>
+        </section>
+
+        <!-- ============ FAQ ============ -->
+        <section class="page" id="page-faq" data-title="Questions fréquentes" aria-labelledby="h-faq" hidden>
+          <div class="eyebrow">Aide</div>
+          <div class="heading"><div><h1 id="h-faq">Questions fréquentes</h1>
+          <p class="sub">Les réponses courtes aux questions les plus posées. Utilisez le filtre pour aller droit au but.</p></div></div>
+          <div class="filters">
+            <label class="field">Filtrer les questions<input type="search" id="faqSearch" placeholder="Ex. code de suivi, pièce, retard…"></label>
+            <span class="filter-note" id="faqCount" aria-live="polite"></span>
+          </div>
+          <div id="faqList"></div>
+        </section>
+      </main>
+
+      <footer class="site-foot">
+        <span>TSITA GEST × BSCA Bank — Guide utilisateur interactif · phase 1</span>
+        <span>Données fictives · Seuils de délai de démonstration à valider par la conformité BSCA</span>
+      </footer>
+    </div>
+  </div>
+
+  <div class="toast-zone" id="toasts" aria-live="polite" aria-atomic="false"></div>
+  <script src="js/guide.js"></script>
+</body>
+</html>

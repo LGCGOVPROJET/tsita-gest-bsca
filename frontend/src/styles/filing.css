@@ -1,0 +1,1066 @@
+/* Formulaire public de dépôt — charte BSCA.
+   Mise en page pilotée par la largeur réellement disponible (container queries) :
+   même rendu cohérent dans la page /deposer, dans la fenêtre de l'accueil et sur téléphone. */
+
+.filing {
+  container-type: inline-size;
+  container-name: filing;
+}
+
+.filing-shell {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(19, 47, 75, 0.08);
+  /* clip (et non hidden) : rogne les coins sans casser la barre d'actions collante sur mobile. */
+  overflow: clip;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.filing.compact .filing-shell {
+  box-shadow: none;
+  border-radius: 16px;
+}
+
+/* ——— Progression : barre horizontale (par défaut) ——— */
+.filing-rail {
+  padding: 18px 20px 14px;
+  background: linear-gradient(180deg, #f7f9fc, #fff);
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filing-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: space-between;
+}
+
+.filing-step-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  text-align: center;
+  min-width: 0;
+}
+
+.filing-step-item:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  left: calc(50% + 24px);
+  right: calc(-50% + 24px);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 400ms var(--ease);
+}
+
+.filing-step-item.done:not(:last-child)::after {
+  background: var(--blue);
+}
+
+.filing-step-dot {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: white;
+  border: 2px solid var(--line);
+  color: var(--muted);
+  transition:
+    background 300ms var(--ease),
+    border-color 300ms var(--ease),
+    color 300ms var(--ease),
+    box-shadow 300ms var(--ease),
+    transform 300ms var(--ease);
+  position: relative;
+  z-index: 1;
+}
+
+.filing-step-item.current .filing-step-dot {
+  border-color: var(--red);
+  color: var(--red);
+  transform: scale(1.08);
+  animation: filing-pulse 2.4s var(--ease) infinite;
+}
+
+.filing-step-item.done .filing-step-dot {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+
+.filing-step-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.filing-step-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--muted);
+  transition: color 300ms var(--ease);
+  white-space: nowrap;
+}
+
+.filing-step-item.current .filing-step-label {
+  color: var(--navy);
+  font-weight: 800;
+}
+
+.filing-step-item.done .filing-step-label {
+  color: var(--blue);
+}
+
+.filing-step-desc {
+  display: none;
+}
+
+.filing-progress {
+  height: 4px;
+  border-radius: 4px;
+  background: #e8eef5;
+  overflow: hidden;
+}
+
+.filing-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--blue), var(--red));
+  transition: width 500ms var(--ease);
+}
+
+.filing-rail-foot {
+  display: none;
+}
+
+/* Étroit : seul le libellé de l'étape en cours est affiché. */
+@container filing (max-width: 520px) {
+  .filing-rail {
+    padding: 14px 14px 12px;
+  }
+  .filing-step-dot {
+    width: 34px;
+    height: 34px;
+  }
+  .filing-step-item:not(:last-child)::after {
+    top: 16px;
+    left: calc(50% + 20px);
+    right: calc(-50% + 20px);
+  }
+  /* Libellés masqués visuellement (l'en-tête d'étape affiche déjà le nom) : plus de débordement sur les bords. */
+  .filing-step-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* ——— Progression : colonne verticale (large) ——— */
+@container filing (min-width: 820px) {
+  .filing-shell {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+  .filing-rail {
+    background: linear-gradient(165deg, #0f2a47 0%, var(--side) 45%, var(--navy) 100%);
+    border-bottom: 0;
+    padding: 30px 22px 24px;
+    gap: 22px;
+    position: relative;
+    overflow: hidden;
+  }
+  .filing-rail::after {
+    content: '';
+    position: absolute;
+    left: 22px;
+    bottom: 0;
+    width: 90px;
+    height: 5px;
+    background: var(--red);
+    border-radius: 5px 5px 0 0;
+  }
+  .filing-steps {
+    flex-direction: column;
+    gap: 0;
+  }
+  .filing-step-item {
+    flex-direction: row;
+    align-items: flex-start;
+    text-align: left;
+    gap: 12px;
+    padding-bottom: 24px;
+  }
+  .filing-step-item:last-child {
+    padding-bottom: 0;
+  }
+  .filing-step-item:not(:last-child)::after {
+    top: 42px;
+    bottom: 4px;
+    left: 18px;
+    right: auto;
+    width: 2px;
+    height: auto;
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .filing-step-item.done:not(:last-child)::after {
+    background: rgba(255, 255, 255, 0.7);
+  }
+  .filing-step-dot {
+    flex: none;
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: var(--side-text);
+  }
+  .filing-step-item.current .filing-step-dot {
+    background: white;
+    border-color: white;
+    color: var(--red);
+    animation-name: filing-pulse-dark;
+  }
+  .filing-step-item.done .filing-step-dot {
+    background: var(--blue);
+    border-color: #6fa0d4;
+    color: white;
+  }
+  .filing-step-text {
+    padding-top: 2px;
+  }
+  .filing-step-label,
+  .filing-step-item.done .filing-step-label {
+    color: var(--side-text);
+    font-size: var(--fs-sm);
+  }
+  .filing-step-item.current .filing-step-label {
+    color: white;
+  }
+  .filing-step-desc {
+    display: block;
+    font-size: var(--fs-xs);
+    color: var(--side-muted);
+  }
+  .filing-progress {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  .filing-progress span {
+    background: linear-gradient(90deg, #8fbde8, white);
+  }
+  .filing-rail-foot {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-top: auto;
+    font-size: var(--fs-xs);
+    color: var(--side-text);
+    line-height: 1.5;
+  }
+  .filing-rail-foot svg {
+    flex: none;
+    margin-top: 2px;
+    color: #8fbde8;
+  }
+}
+
+/* ——— Contenu ——— */
+.filing-main {
+  padding: 26px 30px 24px;
+  min-width: 0;
+}
+
+@container filing (max-width: 520px) {
+  .filing-main {
+    padding: 18px 16px 18px;
+  }
+}
+
+.filing-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.filing-head-icon {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--danger-bg), #fff);
+  border: 1px solid var(--danger-line);
+  color: var(--red);
+  animation: filing-pop 380ms var(--ease) both;
+}
+
+.filing-head-icon.ok {
+  background: var(--success-bg);
+  border-color: var(--success-line);
+  color: var(--success);
+}
+
+.filing-head:has(h2:only-child) h2 {
+  text-align: center;
+  width: 100%;
+}
+
+.filing-head h2 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+.filing-head h2:focus {
+  outline: none;
+}
+
+.filing-head-eyebrow {
+  display: block;
+  font: 800 var(--fs-xs) var(--font-text);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--red);
+  margin-bottom: 3px;
+}
+
+.filing-head-title {
+  display: block;
+  font: 800 clamp(1.25rem, 3.4cqi, 1.625rem) var(--font-title);
+  color: var(--navy);
+  letter-spacing: -0.4px;
+}
+
+.filing-tip {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--info-bg);
+  border: 1px solid var(--info-line);
+  border-left: 4px solid var(--blue);
+  color: var(--info-ink);
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  margin: 0 0 18px;
+  animation: filing-fade 400ms var(--ease) both;
+}
+
+.filing-tip svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--blue);
+}
+
+/* ——— Panneaux animés (sens de navigation) ——— */
+.filing-panel:not([hidden]) {
+  animation: filing-in-fwd 360ms var(--ease) both;
+}
+
+.filing[data-dir='back'] .filing-panel:not([hidden]) {
+  animation-name: filing-in-back;
+}
+
+/* ——— Champs ——— */
+.filing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 0 16px;
+  align-items: start;
+}
+
+.filing .field {
+  margin: 0 0 16px;
+  /* Pas d'étirement : libellé et case gardent leur hauteur même si un voisin a une aide sous le champ. */
+  align-content: start;
+}
+
+.filing .field .label-text {
+  font-weight: 700;
+  color: var(--navy);
+  font-size: var(--fs-sm);
+}
+
+.filing .field input,
+.filing .field select,
+.filing .field textarea {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--field-line);
+  background: #fbfcfe;
+  padding: 11px 14px;
+  font-size: var(--fs-md);
+  color: var(--ink);
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+.filing .field textarea {
+  min-height: 150px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.filing .field input:hover,
+.filing .field select:hover,
+.filing .field textarea:hover {
+  border-color: var(--blue);
+}
+
+.filing .field input:focus,
+.filing .field select:focus,
+.filing .field textarea:focus {
+  border-color: var(--blue);
+  background: white;
+  box-shadow: 0 0 0 4px rgba(11, 80, 154, 0.12);
+}
+
+.filing .field [aria-invalid='true'] {
+  border-color: var(--danger);
+  background: #fffafa;
+}
+
+.filing .field .error {
+  animation: filing-shake 320ms var(--ease);
+}
+
+.filing-amount {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 0 8px;
+  align-items: start;
+}
+
+/* ——— Tuiles de choix (produit, canal de réponse) ——— */
+.filing-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0 0 18px;
+  min-width: 0;
+}
+
+.filing-fieldset legend {
+  font-weight: 700;
+  color: var(--navy);
+  font-size: var(--fs-sm);
+  margin-bottom: 10px;
+  padding: 0;
+}
+
+.filing-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 158px), 1fr));
+  gap: 10px;
+}
+
+.filing-tiles.three {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+}
+
+.filing-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 96px;
+  padding: 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  background: white;
+  cursor: pointer;
+  transition:
+    border-color 200ms var(--ease),
+    box-shadow 200ms var(--ease),
+    transform 200ms var(--ease),
+    background 200ms var(--ease);
+}
+
+.filing-tile input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.filing-tile:hover {
+  border-color: #9fbbd8;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(19, 47, 75, 0.08);
+}
+
+.filing-tile:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-color: var(--focus-ring);
+}
+
+.filing-tile-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--blue-soft);
+  color: var(--blue);
+  transition:
+    background 200ms var(--ease),
+    color 200ms var(--ease),
+    transform 200ms var(--ease);
+}
+
+.filing-tile-label {
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  color: var(--ink);
+  padding-right: 18px;
+}
+
+.filing-tile-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: var(--red);
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity 200ms var(--ease),
+    transform 260ms var(--ease);
+}
+
+.filing-tile.selected {
+  border-color: var(--red);
+  background: linear-gradient(180deg, #fff, #fff6f7);
+  box-shadow: 0 0 0 3px rgba(217, 19, 44, 0.1);
+}
+
+.filing-tile.selected .filing-tile-icon {
+  background: var(--red);
+  color: white;
+  transform: rotate(-6deg) scale(1.05);
+}
+
+.filing-tile.selected .filing-tile-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.filing-tile.skeleton {
+  cursor: default;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e7edf4 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: filing-shimmer 1.2s linear infinite;
+  border-color: transparent;
+}
+
+@container filing (max-width: 420px) {
+  /* Canaux de réponse : liste pleine largeur (pas de tuile orpheline, libellés sur une ligne). */
+  .filing-tiles.three {
+    grid-template-columns: 1fr;
+  }
+  .filing-tile {
+    flex-direction: row;
+    align-items: center;
+    min-height: 60px;
+    padding: 10px 12px;
+  }
+  .filing-tile-check {
+    top: 50%;
+    margin-top: -8px;
+  }
+}
+
+.filing-error {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  animation: filing-shake 320ms var(--ease);
+}
+
+/* ——— Jauge de description ——— */
+.filing-meter {
+  height: 4px;
+  border-radius: 4px;
+  background: #edf1f6;
+  overflow: hidden;
+  margin: -8px 0 6px;
+}
+
+.filing-meter span {
+  display: block;
+  height: 100%;
+  background: var(--warn);
+  border-radius: 4px;
+  transition:
+    width 250ms var(--ease),
+    background 250ms var(--ease);
+}
+
+.filing-meter span.ok {
+  background: var(--success);
+}
+
+.filing-meter-text {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 16px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--warn-text);
+}
+
+.filing-meter-text.ok {
+  color: var(--success);
+}
+
+/* ——— Pièces ——— */
+.filing .drop {
+  border: 2px dashed #b9cde2;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fbfdff, #f3f7fc);
+  padding: 34px 18px;
+  transition:
+    border-color 200ms var(--ease),
+    background 200ms var(--ease),
+    transform 200ms var(--ease);
+}
+
+.filing .drop:hover {
+  border-color: var(--blue);
+}
+
+.filing .drop.dragging {
+  border-color: var(--blue);
+  background: var(--info-bg);
+  transform: scale(1.01);
+}
+
+.filing .drop-icon {
+  color: var(--blue);
+  animation: filing-float 3s ease-in-out infinite;
+}
+
+.filing .file-item {
+  animation: filing-in-fwd 280ms var(--ease) both;
+  border-radius: 12px;
+}
+
+/* ——— Récapitulatif ——— */
+.filing-review {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filing-review-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #fbfcfe;
+  min-width: 0;
+  transition: border-color 200ms var(--ease);
+}
+
+.filing-review-card:hover {
+  border-color: #b9cde2;
+}
+
+.filing-review-card.wide {
+  grid-column: 1 / -1;
+}
+
+.filing-review-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.filing-review-card h3 {
+  margin: 0;
+  flex: 1;
+  font-size: var(--fs-md);
+  color: var(--navy);
+}
+
+.filing-review-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.filing-edit {
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-weight: 800;
+  font-size: var(--fs-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  min-height: 32px;
+}
+
+.filing-edit:hover {
+  background: var(--info-bg);
+}
+
+.filing-review-body {
+  display: grid;
+  gap: 3px;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.filing-review-body strong {
+  color: var(--navy);
+}
+
+/* ——— Consentement ——— */
+.filing-consent {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  transition:
+    border-color 200ms var(--ease),
+    background 200ms var(--ease);
+}
+
+.filing-consent input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.filing-consent:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.filing-consent-box {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 2px solid var(--field-line);
+  display: grid;
+  place-items: center;
+  color: transparent;
+  background: white;
+  transition:
+    background 200ms var(--ease),
+    border-color 200ms var(--ease),
+    color 200ms var(--ease),
+    transform 200ms var(--ease);
+}
+
+.filing-consent.checked {
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.filing-consent.checked .filing-consent-box {
+  background: var(--success);
+  border-color: var(--success);
+  color: white;
+  transform: scale(1.08);
+}
+
+.filing-consent.invalid {
+  border-color: var(--danger);
+  background: #fffafa;
+}
+
+/* ——— Actions ——— */
+.filing-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.filing-actions-note {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.filing-next {
+  min-width: 180px;
+  padding: 12px 20px;
+  box-shadow: 0 8px 20px rgba(217, 19, 44, 0.18);
+}
+
+.filing-next svg {
+  transition: transform 200ms var(--ease);
+}
+
+.filing-next:hover:not(:disabled) svg {
+  transform: translateX(3px);
+}
+
+/* Téléphone : barre d'actions toujours visible en bas. */
+@container filing (max-width: 520px) {
+  .filing-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin: 16px -16px -18px;
+    padding: 14px 16px 16px;
+    border-top: 1px solid var(--line-soft);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(6px);
+  }
+  .filing-actions .btn {
+    flex: 1;
+    min-width: 0;
+  }
+  .filing-actions .filing-next {
+    flex: 1.5;
+  }
+  /* « Envoyer ma réclamation » → « Envoyer » à l'écran ; le nom accessible reste complet. */
+  .filing-long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .filing-actions-note {
+    display: none;
+  }
+}
+
+.filing-foot {
+  margin: 16px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.filing-foot a {
+  font-weight: 800;
+  color: var(--blue);
+}
+
+/* ——— Confirmation ——— */
+.filing-confirm {
+  animation: filing-fade 450ms var(--ease) both;
+}
+
+.filing-confirm-hero {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.filing-check {
+  width: 78px;
+  height: 78px;
+}
+
+.filing-check circle {
+  fill: var(--success-bg);
+  stroke: var(--success);
+  stroke-width: 2.5;
+  stroke-dasharray: 151;
+  stroke-dashoffset: 151;
+  animation: filing-draw 700ms var(--ease) forwards;
+}
+
+.filing-check path {
+  fill: none;
+  stroke: var(--success);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: filing-draw 450ms var(--ease) 550ms forwards;
+}
+
+.filing-confirm .confirm-actions {
+  justify-content: center;
+}
+
+@container filing (max-width: 520px) {
+  .filing-confirm .confirm-actions .btn {
+    flex: 1;
+  }
+  .filing-confirm-hero + .stack {
+    margin-top: 4px;
+  }
+}
+
+.filing-new {
+  margin: 14px 0 0;
+  text-align: center;
+}
+
+.filing-new .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* ——— Animations ——— */
+@keyframes filing-in-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes filing-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes filing-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes filing-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-10deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes filing-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 19, 44, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(217, 19, 44, 0);
+  }
+}
+
+@keyframes filing-pulse-dark {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 255, 255, 0);
+  }
+}
+
+@keyframes filing-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes filing-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes filing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes filing-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filing *,
+  .filing *::before,
+  .filing *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .filing-check circle,
+  .filing-check path {
+    stroke-dashoffset: 0;
+  }
+}

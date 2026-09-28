@@ -1,0 +1,3684 @@
+openapi: 3.1.0
+info:
+  title: TSITA GEST × BSCA Bank — API
+  version: v1
+  description: |
+    API REST de TSITA GEST, outil de gestion des réclamations clients de BSCA Bank
+    (contrat de référence : `docs/ARCHITECTURE.md` §9). **Toutes les données sont fictives**
+    (démonstration) : aucun chiffre ni client réel BSCA.
+
+    ## Authentification (Laravel Sanctum, mode SPA par cookie)
+    1. Appeler `GET /sanctum/csrf-cookie` (hors préfixe `/api/v1`, à la racine du serveur) :
+       le serveur pose le cookie `XSRF-TOKEN`.
+    2. Envoyer, sur **chaque** requête modifiante (POST/PATCH/DELETE), l'en-tête `X-XSRF-TOKEN`
+       contenant la valeur (décodée URL) du cookie `XSRF-TOKEN`, avec les cookies (`withCredentials`).
+    3. `POST /auth/login` ouvre la session : cookie httpOnly `tsita-gest-session` (SameSite=Lax),
+       régénéré à la connexion, expiration après 30 min d'inactivité.
+
+    Les routes `/public/*`, `/auth/login`, `/auth/forgot-password` et `/auth/reset-password`
+    ne nécessitent pas de session (le jeton CSRF reste requis pour les POST issus du navigateur).
+
+    ## Conventions
+    - Ressources enveloppées `{ "data": … }` ; listes paginées
+      `{ "data": [...], "meta": { "current_page", "last_page", "per_page", "total" } }`.
+    - Dates-heures : ISO 8601 **avec décalage `+01:00`** (fuseau `Africa/Brazzaville`, sans heure
+      d'été ; stockage UTC). Dates seules : `AAAA-MM-JJ` (jour local).
+    - Montants : chaîne décimale à 2 décimales (`"150000.00"`) ou `null` (jamais `0` par défaut),
+      toujours accompagnés d'une devise ISO 4217 (`XAF` par défaut, `EUR`, `USD`, `CNY`, `XOF`) ou `null`.
+    - Erreurs : `401 {message}`, `403 {message}`, `404 {message}`, `422 {message, errors:{champ:[..]}}`,
+      `429 {message}`. Les règles métier non respectées renvoient aussi 422 (clé `general` si aucun champ).
+    - Autorisations : permission du rôle (voir `x-permissions` sur chaque opération) **et** périmètre
+      (agence / entité / propriété du dossier), appliqués côté serveur.
+    - Limitation de débit : login / mot de passe oublié / réinitialisation / confirmation MFA
+      5 req/min par (email + IP) ; portail public 10 req/min par IP ; API authentifiée (interne et client)
+      180 req/min par utilisateur.
+
+    ## Matrice rôles → permissions (`app/Enums/Role.php`)
+    | Rôle | Permissions |
+    |---|---|
+    | `client` | aucune (espace `/client/*` seulement) |
+    | `agent_accueil` | complaints.view, complaints.create, complaints.reopen, dashboard.view, deadlines.view |
+    | `gestionnaire` | complaints.view/create/qualify/transition/respond/reopen/export, solutions.propose, dashboard.view, deadlines.view |
+    | `responsable` | idem gestionnaire + complaints.assign, solutions.approve_n1, reports.view |
+    | `qualite` | complaints.view, complaints.export, quality.manage, quality.control, reports.view, dashboard.view, deadlines.view |
+    | `conformite` | complaints.view, complaints.export, solutions.approve_n2, reports.view, reports.validate, dashboard.view, deadlines.view, admin.rules.validate, admin.audit |
+    | `direction` | complaints.view, dashboard.view, reports.view, deadlines.view (noms masqués, pas de pièces ni d'échanges) |
+    | `admin` | admin.users, admin.referentials, admin.rules, admin.audit, admin.imports |
+servers:
+  - url: http://127.0.0.1:8010/api/v1
+    description: Back-end Laravel local (php artisan serve)
+  - url: http://localhost:5180/api/v1
+    description: Front Vite local (proxy /api et /sanctum vers 127.0.0.1:8010, même origine)
+security:
+  - sessionCookie: []
+    xsrfToken: []
+tags:
+  - name: Auth
+    description: Authentification, session, MFA (TOTP) et mot de passe.
+  - name: Public
+    description: Portail client sans compte (référence + code de suivi). Throttle 10/min/IP.
+  - name: Client
+    description: Espace client connecté (rôle `client`) — vue client filtrée.
+  - name: Référentiels
+    description: Référentiels internes pour les collaborateurs.
+  - name: Réclamations
+    description: Liste, saisie, consultation, qualification et export des dossiers.
+  - name: Actions dossier
+    description: Actions métier sur un dossier (workflow, affectation, messages, pièces, etc.).
+  - name: Pièces jointes
+  - name: Tâches
+  - name: Solutions
+    description: Propositions de solution versionnées et circuit d'approbation N1/N2.
+  - name: Pilotage
+    description: Tableau de bord, échéances, rapports.
+  - name: Qualité
+    description: Plans d'action qualité et regroupements récurrents.
+  - name: Admin — Utilisateurs
+  - name: Admin — Référentiels
+  - name: Admin — Règles de délai
+  - name: Admin — Journal d'audit
+  - name: Admin — Imports
+
+paths:
+  # ------------------------------------------------------------------ Auth
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: authLogin
+      summary: Connexion (ouvre la session)
+      description: |
+        Vérifie les identifiants. Si la MFA est activée sur le compte et que `mfa_code` est absent,
+        renvoie `200 {mfa_required: true}` sans ouvrir de session. Verrouillage 15 min après
+        10 échecs consécutifs. Throttle 5/min par (email + IP).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: 'Connecté (`{data: User}`) ou second facteur requis (`{mfa_required: true}`).'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/UserEnvelope'
+                  - $ref: '#/components/schemas/MfaRequired'
+        '419': { $ref: '#/components/responses/CsrfMismatch' }
+        '422':
+          description: Identifiants invalides, compte verrouillé ou code MFA invalide.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyLogin' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: authLogout
+      summary: Déconnexion (invalide la session)
+      responses:
+        '204': { description: Session invalidée. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: authMe
+      summary: Utilisateur courant et ses permissions
+      responses:
+        '200':
+          description: Utilisateur connecté.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      operationId: authForgotPassword
+      summary: Demande de lien de réinitialisation
+      description: Réponse neutre et identique, que le compte existe ou non. Throttle 5/min.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 190 }
+      responses:
+        '200':
+          description: Message neutre.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyLogin' }
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      operationId: authResetPassword
+      summary: Réinitialisation du mot de passe
+      description: Mot de passe ≥ 12 caractères, majuscule, minuscule, chiffre et symbole. Throttle 5/min.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, email, password, password_confirmation]
+              properties:
+                token: { type: string, maxLength: 255 }
+                email: { type: string, format: email, maxLength: 190 }
+                password: { type: string, minLength: 12, maxLength: 255, format: password }
+                password_confirmation: { type: string, format: password }
+      responses:
+        '200':
+          description: Mot de passe réinitialisé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '422':
+          description: Validation échouée ou lien invalide/expiré (`errors.token`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyLogin' }
+  /auth/mfa/setup:
+    post:
+      tags: [Auth]
+      operationId: authMfaSetup
+      summary: Initialiser la double authentification (TOTP)
+      description: Génère un secret TOTP (RFC 6238, 30 s, 6 chiffres). La MFA n'est active qu'après `/auth/mfa/confirm`.
+      responses:
+        '200':
+          description: Secret et URL otpauth à afficher en QR code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauth_url]
+                properties:
+                  secret: { type: string, description: Secret base32. }
+                  otpauth_url: { type: string, example: 'otpauth://totp/TSITA%20GEST:agent@example.test?secret=…' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422':
+          description: MFA déjà activée (`{message}` sans `errors`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /auth/mfa/confirm:
+    post:
+      tags: [Auth]
+      operationId: authMfaConfirm
+      summary: Confirmer et activer la MFA
+      description: Throttle 5/min.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^\d{6}$' }
+      responses:
+        '200':
+          description: MFA activée ; utilisateur à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyLogin' }
+
+  # ------------------------------------------------------------------ Public
+  /public/referentials:
+    get:
+      tags: [Public]
+      operationId: publicReferentials
+      summary: Référentiels du formulaire public (libellés seulement)
+      security: []
+      responses:
+        '200':
+          description: Catégories, produits, agences actifs et canaux de réponse.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [categories, products, channels_reply, agencies]
+                properties:
+                  categories:
+                    type: array
+                    items: { $ref: '#/components/schemas/IdLabel' }
+                  products:
+                    type: array
+                    items: { $ref: '#/components/schemas/IdLabel' }
+                  channels_reply:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReplyChannel' }
+                  agencies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        city: { type: string }
+        '429': { $ref: '#/components/responses/TooManyPublic' }
+  /public/complaints:
+    post:
+      tags: [Public]
+      operationId: publicCreateComplaint
+      summary: Déposer une réclamation (sans compte)
+      description: |
+        Le `tracking_code` n'est renvoyé qu'une seule fois (seul son hash est stocké).
+        Pièces : ≤ 5 fichiers, ≤ 10 Mo chacun, pdf/jpg/jpeg/png.
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/PublicComplaintRequest' }
+            encoding:
+              attachments[]:
+                contentType: application/pdf, image/jpeg, image/png
+      responses:
+        '201':
+          description: Réclamation enregistrée.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/PublicComplaintConfirmation' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyPublic' }
+  /public/track:
+    post:
+      tags: [Public]
+      operationId: publicTrack
+      summary: Consulter un dossier (référence + code de suivi)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TrackRequest' }
+      responses:
+        '200':
+          description: Vue client filtrée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientComplaintViewEnvelope' }
+        '404': { $ref: '#/components/responses/TrackNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429':
+          description: "Throttle 10/min/IP, ou référence verrouillée après 5 échecs de code (verrouillage progressif 15 min → 24 h, en-tête Retry-After), ou IP bloquée après 30 échecs/heure. Message neutre identique que la référence existe ou non : « Trop de tentatives pour ce dossier. Réessayez plus tard. »"
+  /public/track/messages:
+    post:
+      tags: [Public]
+      operationId: publicTrackMessage
+      summary: Envoyer un message sécurisé au service réclamations
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/TrackRequest'
+                - type: object
+                  required: [body]
+                  properties:
+                    body: { type: string, minLength: 1, maxLength: 5000 }
+      responses:
+        '201':
+          description: Message enregistré ; vue client à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientComplaintViewEnvelope' }
+        '404': { $ref: '#/components/responses/TrackNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyPublic' }
+  /public/track/attachments:
+    post:
+      tags: [Public]
+      operationId: publicTrackAttachment
+      summary: Transmettre un document
+      description: Pièce classée `client`, visible du client. 20 documents client maximum par dossier.
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/TrackRequest'
+                - type: object
+                  required: [file]
+                  properties:
+                    file: { type: string, format: binary, description: 'pdf, jpg, jpeg, png ; ≤ 10 Mo' }
+      responses:
+        '201':
+          description: Document reçu ; vue client à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientComplaintViewEnvelope' }
+        '404': { $ref: '#/components/responses/TrackNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyPublic' }
+  /public/track/reopen:
+    post:
+      tags: [Public]
+      operationId: publicTrackReopen
+      summary: Demander la réouverture (crée un dossier enfant)
+      description: Crée un dossier enfant au statut `reouvert` lié par `parent_complaint_id`, avec un nouveau code de suivi.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/TrackRequest'
+                - type: object
+                  required: [reason]
+                  properties:
+                    reason: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '201':
+          description: Dossier enfant créé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReopenConfirmationEnvelope' }
+        '404': { $ref: '#/components/responses/TrackNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyPublic' }
+
+  # ------------------------------------------------------------------ Client
+  /client/complaints:
+    get:
+      tags: [Client]
+      operationId: clientListComplaints
+      summary: Mes réclamations (vue résumée)
+      description: Rôle `client` uniquement ; 200 dossiers maximum, triés par réception décroissante (non paginé).
+      x-permissions: ['rôle client']
+      responses:
+        '200':
+          description: Liste résumée.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClientComplaintSummary' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /client/complaints/{reference}:
+    get:
+      tags: [Client]
+      operationId: clientShowComplaint
+      summary: Détail d'une de mes réclamations (vue client)
+      x-permissions: ['rôle client']
+      parameters:
+        - $ref: '#/components/parameters/ClientReference'
+      responses:
+        '200':
+          description: Vue client filtrée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientComplaintViewEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ClientNotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /client/complaints/{reference}/messages:
+    post:
+      tags: [Client]
+      operationId: clientComplaintMessage
+      summary: Envoyer un message sur un de mes dossiers
+      x-permissions: ['rôle client']
+      parameters:
+        - $ref: '#/components/parameters/ClientReference'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 5000 }
+      responses:
+        '201':
+          description: Message enregistré ; vue client à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientComplaintViewEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ClientNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /client/complaints/{reference}/attachments:
+    post:
+      tags: [Client]
+      operationId: clientComplaintAttachment
+      summary: Transmettre un document sur un de mes dossiers
+      description: Pièce classée `client`, visible du client. 20 documents client maximum par dossier (422 au-delà).
+      x-permissions: ['rôle client']
+      parameters:
+        - $ref: '#/components/parameters/ClientReference'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'pdf, jpg, jpeg, png ; ≤ 10 Mo' }
+      responses:
+        '201':
+          description: Document reçu ; vue client à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientComplaintViewEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ClientNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /client/complaints/{reference}/reopen:
+    post:
+      tags: [Client]
+      operationId: clientComplaintReopen
+      summary: Demander la réouverture d'un de mes dossiers (dossier enfant)
+      x-permissions: ['rôle client']
+      parameters:
+        - $ref: '#/components/parameters/ClientReference'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '201':
+          description: Dossier enfant créé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReopenConfirmationEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ClientNotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  # ------------------------------------------------------------------ Interne
+  /referentials:
+    get:
+      tags: [Référentiels]
+      operationId: referentials
+      summary: Référentiels internes
+      description: Accessible à tout collaborateur actif (rôle ≠ client).
+      x-permissions: ['collaborateur (staff)']
+      responses:
+        '200':
+          description: Référentiels complets (y compris inactifs) et énumérations libellées.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalReferentials' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /customers:
+    get:
+      tags: [Référentiels]
+      operationId: searchCustomers
+      summary: Rechercher un client (rattachement lors d'une saisie agent)
+      description: |
+        Recherche sur le nom, l'email ou (≥ 4 chiffres) le téléphone ; 20 résultats maximum, tri par nom.
+        Numéro client masqué (4 derniers caractères visibles). Recherche journalisée (`customer.search`).
+      x-permissions: [complaints.create]
+      parameters:
+        - name: search
+          in: query
+          required: true
+          schema: { type: string, minLength: 2, maxLength: 100 }
+      responses:
+        '200':
+          description: Clients correspondants.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    maxItems: 20
+                    items: { $ref: '#/components/schemas/CustomerSearchItem' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /complaints/export:
+    get:
+      tags: [Réclamations]
+      operationId: exportComplaints
+      summary: Exporter la liste des réclamations (CSV / XLSX / PDF)
+      description: |
+        Mêmes filtres que la liste (10 000 lignes max). En-tête du fichier : période, filtres, date de calcul,
+        version de règle, utilisateur. Chaque export est journalisé (`exports` + audit). CSV : séparateur `;`, BOM UTF-8,
+        neutralisation des formules.
+      x-permissions: [complaints.export]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AsOf'
+        - $ref: '#/components/parameters/AgencyId'
+        - $ref: '#/components/parameters/EntityId'
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/Channel'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/DeadlineFlagFilter'
+        - $ref: '#/components/parameters/OwnerId'
+        - $ref: '#/components/parameters/Mine'
+        - $ref: '#/components/parameters/Sort'
+        - name: format
+          in: query
+          description: Format du fichier (défaut `csv`).
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+            default: csv
+      responses:
+        '200': { $ref: '#/components/responses/ExportFile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints:
+    get:
+      tags: [Réclamations]
+      operationId: listComplaints
+      summary: Liste paginée des réclamations du périmètre
+      x-permissions: [complaints.view]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AsOf'
+        - $ref: '#/components/parameters/AgencyId'
+        - $ref: '#/components/parameters/EntityId'
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/Channel'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/DeadlineFlagFilter'
+        - $ref: '#/components/parameters/OwnerId'
+        - $ref: '#/components/parameters/Mine'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Page de dossiers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ComplaintListItem' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    post:
+      tags: [Réclamations]
+      operationId: createComplaint
+      summary: Saisie omnicanale d'une réclamation par un agent
+      description: Le code de suivi du client est renvoyé une seule fois dans `meta.tracking_code`.
+      x-permissions: [complaints.create]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/StoreComplaintRequest' }
+          application/json:
+            schema: { $ref: '#/components/schemas/StoreComplaintRequest' }
+      responses:
+        '201':
+          description: Dossier créé.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ComplaintDetailEnvelope'
+                  - type: object
+                    required: [meta]
+                    properties:
+                      meta:
+                        type: object
+                        required: [tracking_code]
+                        properties:
+                          tracking_code: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    get:
+      tags: [Réclamations]
+      operationId: showComplaint
+      summary: Détail d'un dossier (consultation journalisée)
+      description: Pour la direction, données nominatives masquées et `attachments`, `messages`, `audit` vides.
+      x-permissions: [complaints.view]
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    patch:
+      tags: [Réclamations]
+      operationId: qualifyComplaint
+      summary: Qualifier un dossier (audit avant/après)
+      x-permissions: [complaints.qualify]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QualifyComplaintRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /complaints/{complaint}/transition:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: transitionComplaint
+      summary: Changer le statut (transition manuelle autorisée)
+      description: |
+        Seules les cibles de `allowed_transitions` sont acceptées (422 sinon). Les passages vers
+        `reponse_envoyee` et `reouvert` passent par `/send-response` et `/reopen`.
+      x-permissions: [complaints.transition]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_status, reason]
+              properties:
+                to_status: { $ref: '#/components/schemas/ComplaintStatus' }
+                reason: { type: string, minLength: 3, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/assign:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: assignComplaint
+      summary: Affecter / réattribuer le dossier
+      x-permissions: [complaints.assign]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner_id, reason]
+              properties:
+                owner_id: { type: integer, description: Utilisateur propriétaire. }
+                deputy_id: { type: [integer, 'null'], description: Suppléant (différent du propriétaire). }
+                processing_entity_id: { type: [integer, 'null'], description: Entité de traitement active. }
+                reason: { type: string, minLength: 3, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: acknowledgeComplaint
+      summary: Enregistrer l'accusé de réception et sa preuve d'envoi
+      x-permissions: ['complaints.create OU complaints.respond']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, delivery_status]
+              properties:
+                template_id: { type: [integer, 'null'], description: Modèle actif de type `accuse`. }
+                channel: { type: string, description: Code de canal actif. }
+                delivery_status: { $ref: '#/components/schemas/DeliveryStatus' }
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/messages:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: addComplaintMessage
+      summary: Ajouter un message client ou une note interne
+      x-permissions:
+        - 'client_message : complaints.respond'
+        - 'internal_note : complaints.create OU complaints.respond OU quality.control'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, body]
+              properties:
+                kind: { $ref: '#/components/schemas/MessageKind' }
+                body: { type: string, minLength: 1, maxLength: 5000 }
+                channel: { type: [string, 'null'], description: Code de canal actif. }
+      responses:
+        '201': { $ref: '#/components/responses/ComplaintDetailCreated' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/attachments:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: addComplaintAttachment
+      summary: Joindre une pièce
+      description: Seule une pièce classée `client` peut être `visibility=client`.
+      x-permissions: ['complaints.create OU complaints.respond']
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, classification, visibility]
+              properties:
+                file: { type: string, format: binary, description: 'pdf, jpg, jpeg, png ; ≤ 10 Mo' }
+                classification: { $ref: '#/components/schemas/AttachmentClassification' }
+                visibility: { $ref: '#/components/schemas/Visibility' }
+      responses:
+        '201': { $ref: '#/components/responses/ComplaintDetailCreated' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Tâches]
+      operationId: createTask
+      summary: Créer une tâche sur le dossier
+      x-permissions: ['complaints.transition OU complaints.assign']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/TaskInput'
+                - required: [title]
+      responses:
+        '201':
+          description: Tâche créée (statut `a_faire` par défaut).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/solutions:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Solutions]
+      operationId: proposeSolution
+      summary: Proposer une solution (nouvelle version)
+      x-permissions: [solutions.propose]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, description, decision]
+              properties:
+                type: { $ref: '#/components/schemas/SolutionType' }
+                description: { type: string, minLength: 10, maxLength: 5000 }
+                root_cause: { type: [string, 'null'], maxLength: 2000 }
+                amount: { $ref: '#/components/schemas/AmountInput' }
+                currency: { $ref: '#/components/schemas/CurrencyInput' }
+                decision: { $ref: '#/components/schemas/Decision' }
+      responses:
+        '201':
+          description: Solution créée (brouillon).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolutionEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/send-response:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: sendComplaintResponse
+      summary: Envoyer la réponse finale au client
+      description: Exige une solution approuvée ; renseigne `final_response_at`, passe au statut `reponse_envoyee` et copie la décision.
+      x-permissions: [complaints.respond]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body, channel]
+              properties:
+                body: { type: string, minLength: 10, maxLength: 10000 }
+                template_id: { type: [integer, 'null'], description: Modèle actif. }
+                channel: { type: string, description: Code de canal actif. }
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/reopen:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: reopenComplaint
+      summary: Réouvrir (crée un dossier enfant)
+      description: La réponse contient le **dossier enfant** créé, avec `meta.tracking_code` et `meta.parent_reference`.
+      x-permissions: [complaints.reopen]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '201':
+          description: Dossier enfant créé.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ComplaintDetailEnvelope'
+                  - type: object
+                    required: [meta]
+                    properties:
+                      meta:
+                        type: object
+                        required: [tracking_code, parent_reference]
+                        properties:
+                          tracking_code: { type: string }
+                          parent_reference: { $ref: '#/components/schemas/Reference' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/mark-duplicate:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: markComplaintDuplicate
+      summary: Marquer comme doublon (aucune suppression)
+      description: L'utilisateur doit aussi pouvoir consulter le dossier original.
+      x-permissions: [complaints.qualify]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [duplicate_of_id, reason]
+              properties:
+                duplicate_of_id: { type: integer }
+                reason: { type: string, minLength: 3, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/ComplaintDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /complaints/{complaint}/controls:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [Actions dossier]
+      operationId: controlComplaint
+      summary: Enregistrer un contrôle qualité
+      x-permissions: [quality.control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: { $ref: '#/components/schemas/ControlResult' }
+                findings:
+                  type: [string, 'null']
+                  maxLength: 5000
+                  description: Obligatoire sauf si `result = conforme`.
+      responses:
+        '201': { $ref: '#/components/responses/ComplaintDetailCreated' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /attachments/{attachment}/download:
+    get:
+      tags: [Pièces jointes]
+      operationId: downloadAttachment
+      summary: Télécharger une pièce (contrôle d'accès, intégrité SHA-256, audit)
+      description: |
+        Interdit à la direction et pour une pièce rejetée à l'analyse. Pièce `confidentiel` :
+        responsable, conformité, propriétaire ou suppléant du dossier uniquement.
+      x-permissions: [complaints.view]
+      parameters:
+        - name: attachment
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Contenu binaire du fichier.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: "attachment; filename=\"…\"; filename*=UTF-8''…"
+          content:
+            application/pdf:
+              schema: { type: string, contentMediaType: application/pdf }
+            image/jpeg:
+              schema: { type: string, contentMediaType: image/jpeg }
+            image/png:
+              schema: { type: string, contentMediaType: image/png }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Intégrité du fichier non vérifiée (empreinte différente) — téléchargement refusé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /tasks/{task}:
+    patch:
+      tags: [Tâches]
+      operationId: updateTask
+      summary: Mettre à jour une tâche
+      description: Passage à `terminee` renseigne `completed_at` ; retour à un autre statut le remet à null.
+      x-permissions: ['complaints.transition OU complaints.assign OU assigné de la tâche']
+      parameters:
+        - name: task
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskInput' }
+      responses:
+        '200':
+          description: Tâche à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /solutions:
+    get:
+      tags: [Solutions]
+      operationId: listSolutions
+      summary: Solutions du périmètre (file d'approbation)
+      x-permissions: ['solutions.propose OU solutions.approve_n1 OU solutions.approve_n2']
+      parameters:
+        - name: status
+          in: query
+          description: |
+            Un statut (`SolutionStatus`) ou une liste séparée par des virgules (5 au plus),
+            ex. `soumise,approuvee_n1`. Valeur inconnue → 422 « Statut de solution inconnu. ».
+          schema:
+            type: string
+            pattern: '^(brouillon|soumise|approuvee_n1|approuvee|rejetee)(,(brouillon|soumise|approuvee_n1|approuvee|rejetee)){0,4}$'
+            example: soumise,approuvee_n1
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Page de solutions (tri par mise à jour décroissante).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Solution' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /solutions/{solution}/submit:
+    post:
+      tags: [Solutions]
+      operationId: submitSolution
+      summary: Soumettre une solution à validation
+      x-permissions: [solutions.propose]
+      parameters:
+        - $ref: '#/components/parameters/SolutionId'
+      responses:
+        '200':
+          description: Solution soumise.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolutionEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /solutions/{solution}/approve:
+    post:
+      tags: [Solutions]
+      operationId: approveSolution
+      summary: Approuver ou rejeter (N1 responsable, N2 conformité)
+      description: Le niveau N2 est requis si `requires_n2` (montant ≥ seuil `settings.n2_threshold`, 500 000 XAF par défaut).
+      x-permissions: ['solutions.approve_n1 OU solutions.approve_n2']
+      parameters:
+        - $ref: '#/components/parameters/SolutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { $ref: '#/components/schemas/ApprovalDecision' }
+                comment:
+                  type: [string, 'null']
+                  maxLength: 2000
+                  description: Obligatoire si `decision = rejete`.
+      responses:
+        '200':
+          description: Décision enregistrée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolutionEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /dashboard:
+    get:
+      tags: [Pilotage]
+      operationId: dashboard
+      summary: Tableau de bord (KPI, séries, priorités, activité)
+      description: 'Période par défaut : 6 derniers mois (début du mois M-5 → `to` ou `as_of`).'
+      x-permissions: [dashboard.view]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AsOf'
+        - $ref: '#/components/parameters/AgencyId'
+        - $ref: '#/components/parameters/EntityId'
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/Channel'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: Données du tableau de bord.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Dashboard' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /deadlines:
+    get:
+      tags: [Pilotage]
+      operationId: deadlines
+      summary: Files d'échéance (paginées) + synthèse + règles actives
+      description: |
+        `a_echeance` (défaut) : dossiers ouverts non en retard, par échéance croissante ;
+        `en_retard` : ouverts dont l'échéance finale est dépassée ; `clos_en_retard` : répondus après l'échéance.
+        Les doublons sont exclus.
+      x-permissions: [deadlines.view]
+      parameters:
+        - $ref: '#/components/parameters/Queue'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AsOf'
+        - $ref: '#/components/parameters/AgencyId'
+        - $ref: '#/components/parameters/EntityId'
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/Channel'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/DeadlineFlagFilter'
+        - $ref: '#/components/parameters/OwnerId'
+        - $ref: '#/components/parameters/Mine'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Page de la file demandée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadlinesPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /quality/actions:
+    get:
+      tags: [Qualité]
+      operationId: listQualityActions
+      summary: Plan d'actions qualité (paginé)
+      x-permissions: ['quality.manage OU quality.control OU reports.view']
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/QualityActionStatus' }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Page d'actions (échéance croissante, sans échéance en dernier).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/QualityAction' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    post:
+      tags: [Qualité]
+      operationId: createQualityAction
+      summary: Créer une action qualité
+      x-permissions: [quality.manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/QualityActionInput'
+                - required: [title, root_cause]
+      responses:
+        '201':
+          description: Action créée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityActionEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /quality/actions/{action}:
+    patch:
+      tags: [Qualité]
+      operationId: updateQualityAction
+      summary: Mettre à jour une action qualité
+      description: Passage à `realisee` ou `verifiee` renseigne `completed_at` s'il est vide. `complaint_ids` remplace la liste liée.
+      x-permissions: ['quality.manage OU propriétaire de l''action']
+      parameters:
+        - name: action
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QualityActionInput' }
+      responses:
+        '200':
+          description: Action à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityActionEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /quality/recurring:
+    get:
+      tags: [Qualité]
+      operationId: qualityRecurring
+      summary: Regroupements récurrents (catégorie × produit) sur la période
+      x-permissions: ['quality.manage OU quality.control OU reports.view']
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AsOf'
+        - $ref: '#/components/parameters/AgencyId'
+        - $ref: '#/components/parameters/EntityId'
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/Channel'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: Regroupements triés par volume décroissant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/RecurringGroup' }
+                  meta: { $ref: '#/components/schemas/KpiMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /reports/activity:
+    get:
+      tags: [Pilotage]
+      operationId: reportActivity
+      summary: Rapport d'activité et rapprochement du stock (JSON ou fichier)
+      description: |
+        Formule : stock_debut (veille de `from`) + entrées − réponses finales ± ajustements = stock_fin (au `to`).
+        Sans `format` → JSON ; avec `format=csv|xlsx|pdf` → fichier binaire (export journalisé).
+        La réponse inclut la dernière validation conformité correspondant exactement à la période et aux filtres.
+        Période par défaut : 6 derniers mois.
+      x-permissions: [reports.view]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AsOf'
+        - $ref: '#/components/parameters/AgencyId'
+        - $ref: '#/components/parameters/EntityId'
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/Channel'
+        - $ref: '#/components/parameters/Status'
+        - name: format
+          in: query
+          description: Si présent, renvoie un fichier au lieu du JSON.
+          schema: { $ref: '#/components/schemas/ExportFormat' }
+      responses:
+        '200':
+          description: Rapport JSON, ou fichier si `format` est fourni.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/ActivityReport' }
+            text/csv:
+              schema: { type: string }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, contentMediaType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet }
+            application/pdf:
+              schema: { type: string, contentMediaType: application/pdf }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /reports/activity/validate:
+    post:
+      tags: [Pilotage]
+      operationId: validateActivityReport
+      summary: Valider un rapport d'activité (conformité)
+      description: |
+        Fige un instantané du rapprochement de stock pour la période et les filtres donnés
+        (période par défaut appliquée si besoin), avec la version de règle applicable. Journalisé (`report.validate`).
+        La dernière validation correspondante est ensuite renvoyée par `GET /reports/activity`.
+      x-permissions: [reports.validate]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from: { type: string, format: date }
+                to: { type: string, format: date, description: '≥ from.' }
+                as_of: { type: [string, 'null'], format: date }
+                filters:
+                  type: [object, 'null']
+                  properties:
+                    agency_id: { type: [integer, 'null'], minimum: 1 }
+                    entity_id: { type: [integer, 'null'], minimum: 1 }
+                    category_id: { type: [integer, 'null'], minimum: 1 }
+                    product_id: { type: [integer, 'null'], minimum: 1 }
+                    channel: { type: [string, 'null'], description: Code de canal existant. }
+                    status:
+                      oneOf:
+                        - $ref: '#/components/schemas/ComplaintStatus'
+                        - type: 'null'
+                comment: { type: [string, 'null'], maxLength: 2000 }
+      responses:
+        '201':
+          description: Validation enregistrée.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/ReportValidation' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  # ------------------------------------------------------------------ Admin
+  /admin/users:
+    get:
+      tags: [Admin — Utilisateurs]
+      operationId: adminListUsers
+      summary: Comptes utilisateurs (paginé, 50 par défaut)
+      x-permissions: [admin.users]
+      parameters:
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: search
+          in: query
+          description: Recherche sur le nom ou l'email.
+          schema: { type: string, maxLength: 100 }
+        - $ref: '#/components/parameters/Page'
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Page d'utilisateurs (tri par nom).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminUser' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    post:
+      tags: [Admin — Utilisateurs]
+      operationId: adminCreateUser
+      summary: Créer un compte
+      x-permissions: [admin.users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/AdminUserInput'
+                - required: [name, email, password, role]
+      responses:
+        '201':
+          description: Compte créé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /admin/users/{user}:
+    parameters:
+      - name: user
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [Admin — Utilisateurs]
+      operationId: adminShowUser
+      summary: Détail d'un compte
+      x-permissions: [admin.users]
+      responses:
+        '200':
+          description: Compte.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    patch:
+      tags: [Admin — Utilisateurs]
+      operationId: adminUpdateUser
+      summary: Modifier un compte (déverrouiller, réinitialiser la MFA…)
+      description: Un administrateur ne peut ni changer son propre rôle ni désactiver son propre compte (422).
+      x-permissions: [admin.users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUserInput' }
+      responses:
+        '200':
+          description: Compte à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Validation échouée (`ValidationError`) ou auto-modification interdite (`Error`).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ValidationError'
+                  - $ref: '#/components/schemas/Error'
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /admin/{type}:
+    parameters:
+      - $ref: '#/components/parameters/ReferentialType'
+    get:
+      tags: [Admin — Référentiels]
+      operationId: adminListReferential
+      summary: Lister un référentiel (non paginé, inactifs inclus)
+      description: |
+        Tri : `holidays` par date ; `templates` par type, code, version décroissante ; `agencies`/`entities` par nom ;
+        sinon par libellé. Les éléments sont les modèles bruts (voir schémas `Agency`, `ProcessingEntity`,
+        `Category`, `Product`, `ResponseTemplate`, `Holiday`).
+      x-permissions: [admin.referentials]
+      responses:
+        '200':
+          description: Éléments du référentiel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReferentialItem' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    post:
+      tags: [Admin — Référentiels]
+      operationId: adminCreateReferential
+      summary: Créer un élément de référentiel
+      description: |
+        Corps selon `type` (champs obligatoires à la création). `templates` : version = max(version du code)+1.
+        `holidays` : pays forcé à `CG`, cache du calendrier vidé.
+      x-permissions: [admin.referentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReferentialInput' }
+      responses:
+        '201':
+          description: Élément créé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferentialItemEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /admin/{type}/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ReferentialType'
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    patch:
+      tags: [Admin — Référentiels]
+      operationId: adminUpdateReferential
+      summary: Modifier un élément de référentiel
+      description: |
+        Champs facultatifs (`sometimes`). `templates` : toute modification de `subject`, `body` ou `kind` crée
+        une **nouvelle version** (l'ancienne est désactivée) et la renvoie. `categories` : modification de
+        `label`/`description` incrémente `version`.
+      x-permissions: [admin.referentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReferentialInput' }
+      responses:
+        '200':
+          description: Élément à jour (ou nouvelle version de modèle).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferentialItemEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    delete:
+      tags: [Admin — Référentiels]
+      operationId: adminDeleteReferential
+      summary: Désactiver (ou supprimer un jour férié)
+      description: '`holidays` : suppression physique → 204. Autres types : désactivation (`is_active=false`) → 200 avec l''élément.'
+      x-permissions: [admin.referentials]
+      responses:
+        '200':
+          description: Élément désactivé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferentialItemEnvelope' }
+        '204': { description: Jour férié supprimé. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /admin/deadline-rules:
+    get:
+      tags: [Admin — Règles de délai]
+      operationId: adminListDeadlineRules
+      summary: Règles de délai versionnées (paginé)
+      x-permissions: ['admin.rules OU admin.rules.validate']
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        '200':
+          description: Règles paginées (tri type, code, version décroissante).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeadlineRule' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    post:
+      tags: [Admin — Règles de délai]
+      operationId: adminCreateDeadlineRule
+      summary: Créer une règle (ou nouvelle version d'un code existant)
+      description: Version = max(version du code)+1 ; statut `brouillon` par défaut ; point de départ `received_at`.
+      x-permissions: [admin.rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/DeadlineRuleInput'
+                - required: [code, label, kind, unit, duration, source_type, source_reference, effective_from]
+      responses:
+        '201':
+          description: Règle créée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadlineRuleEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /admin/deadline-rules/{rule}:
+    parameters:
+      - $ref: '#/components/parameters/RuleId'
+    patch:
+      tags: [Admin — Règles de délai]
+      operationId: adminUpdateDeadlineRule
+      summary: Modifier une règle non validée (ou retirer une règle validée)
+      description: |
+        Une règle `valide` est immuable : seul `{ "status": "retire" }` est accepté (permission `admin.rules`),
+        sinon 422. Le `code` ne peut pas être modifié (422). La validation passe par `/validate`.
+      x-permissions: [admin.rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeadlineRuleInput' }
+      responses:
+        '200':
+          description: Règle à jour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadlineRuleEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Validation échouée, règle validée immuable ou changement de code.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ValidationError'
+                  - $ref: '#/components/schemas/Error'
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    delete:
+      tags: [Admin — Règles de délai]
+      operationId: adminDeleteDeadlineRule
+      summary: Suppression refusée (toujours 422)
+      description: Les règles ne sont jamais supprimées ; utiliser le statut `retire`. Répond toujours 422 aux porteurs de `admin.rules`.
+      x-permissions: [admin.rules]
+      responses:
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Suppression interdite.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /admin/deadline-rules/{rule}/validate:
+    post:
+      tags: [Admin — Règles de délai]
+      operationId: adminValidateDeadlineRule
+      summary: Valider une règle (conformité)
+      description: Uniquement une règle au statut `a_valider` (403 sinon). Renseigne `validated_by` et `validated_at`.
+      x-permissions: [admin.rules.validate]
+      parameters:
+        - $ref: '#/components/parameters/RuleId'
+      responses:
+        '200':
+          description: Règle validée.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadlineRuleEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /admin/audit-logs:
+    get:
+      tags: [Admin — Journal d'audit]
+      operationId: adminAuditLogs
+      summary: Journal d'audit (paginé, 50 par défaut)
+      x-permissions: [admin.audit]
+      parameters:
+        - name: user_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: action
+          in: query
+          description: Préfixe d'action (ex. `auth.`, `complaint.view`).
+          schema: { type: string, maxLength: 100 }
+        - name: auditable_type
+          in: query
+          schema: { type: string, maxLength: 150, example: Complaint }
+        - name: auditable_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Page'
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Page d'entrées (id décroissant).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditLogEntry' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+  /admin/imports:
+    get:
+      tags: [Admin — Imports]
+      operationId: adminListImports
+      summary: Lots d'import (paginé, plus récents d'abord)
+      x-permissions: [admin.imports]
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: Lots d'import sans le détail des anomalies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ImportBatch' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+    post:
+      tags: [Admin — Imports]
+      operationId: adminCreateImport
+      summary: Importer un CSV historique (idempotent par SHA-256)
+      description: Si le fichier a déjà été importé (même empreinte), 200 avec `meta.already_imported = true` et aucun dossier créé.
+      x-permissions: [admin.imports]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, source_system]
+              properties:
+                file: { type: string, format: binary, description: 'CSV ou texte, ≤ 20 Mo' }
+                source_system: { type: string, maxLength: 50, pattern: '^[A-Za-z0-9_-]+$' }
+      responses:
+        '200':
+          description: Fichier déjà importé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        '201':
+          description: Import terminé.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+  /admin/imports/{import}:
+    get:
+      tags: [Admin — Imports]
+      operationId: adminShowImport
+      summary: Détail d'un lot avec ses anomalies
+      x-permissions: [admin.imports]
+      parameters:
+        - name: import
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Lot et anomalies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/ImportBatchDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyApi' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: tsita-gest-session
+      description: Cookie de session Laravel (httpOnly, SameSite=Lax), posé par `POST /auth/login`. Nom dérivé de APP_NAME (« TSITA GEST » → `tsita-gest-session`).
+    xsrfToken:
+      type: apiKey
+      in: header
+      name: X-XSRF-TOKEN
+      description: Valeur du cookie `XSRF-TOKEN` obtenu via `GET /sanctum/csrf-cookie` ; requis sur les requêtes modifiantes.
+
+  parameters:
+    From:
+      name: from
+      in: query
+      description: Début de période (jour local, inclus).
+      schema: { type: string, format: date }
+    To:
+      name: to
+      in: query
+      description: Fin de période (jour local, inclus) ; ≥ `from`.
+      schema: { type: string, format: date }
+    AsOf:
+      name: as_of
+      in: query
+      description: Date de calcul (défaut aujourd'hui, Africa/Brazzaville).
+      schema: { type: string, format: date }
+    AgencyId:
+      name: agency_id
+      in: query
+      description: Agence de réception.
+      schema: { type: integer, minimum: 1 }
+    EntityId:
+      name: entity_id
+      in: query
+      description: Entité de traitement.
+      schema: { type: integer, minimum: 1 }
+    CategoryId:
+      name: category_id
+      in: query
+      schema: { type: integer, minimum: 1 }
+    ProductId:
+      name: product_id
+      in: query
+      schema: { type: integer, minimum: 1 }
+    Channel:
+      name: channel
+      in: query
+      description: Code de canal existant (ex. `agence`, `email`, `portail`).
+      schema: { type: string, maxLength: 30 }
+    Status:
+      name: status
+      in: query
+      schema: { $ref: '#/components/schemas/ComplaintStatus' }
+    Search:
+      name: search
+      in: query
+      description: Recherche sur la référence, l'objet ou le nom du client.
+      schema: { type: string, maxLength: 100 }
+    DeadlineFlagFilter:
+      name: deadline_flag
+      in: query
+      schema: { $ref: '#/components/schemas/DeadlineFlag' }
+    OwnerId:
+      name: owner_id
+      in: query
+      schema: { type: integer, minimum: 1 }
+    Mine:
+      name: mine
+      in: query
+      description: '`1` = uniquement mes dossiers (propriétaire ou suppléant).'
+      schema: { type: boolean }
+    Sort:
+      name: sort
+      in: query
+      description: Tri sur liste blanche ; préfixe `-` pour l'ordre décroissant.
+      schema:
+        type: string
+        enum: [received_at, reference, status, due_at, priority, -received_at, -reference, -status, -due_at, -priority]
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    Queue:
+      name: queue
+      in: query
+      description: File d'échéance.
+      schema:
+        type: string
+        enum: [a_echeance, en_retard, clos_en_retard]
+        default: a_echeance
+    ComplaintId:
+      name: complaint
+      in: path
+      required: true
+      description: Identifiant numérique du dossier.
+      schema: { type: integer, minimum: 1 }
+    SolutionId:
+      name: solution
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    RuleId:
+      name: rule
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    ClientReference:
+      name: reference
+      in: path
+      required: true
+      description: Référence d'un dossier du client connecté.
+      schema: { $ref: '#/components/schemas/Reference' }
+    ReferentialType:
+      name: type
+      in: path
+      required: true
+      description: Type de référentiel administrable.
+      schema:
+        type: string
+        enum: [agencies, entities, categories, products, templates, holidays]
+
+  responses:
+    Unauthenticated:
+      description: Non authentifié, ou compte inactif/verrouillé (session invalidée).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Non authentifié. }
+    Forbidden:
+      description: Permission ou périmètre insuffisant (ou rôle non admis sur la zone client/staff).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Action non autorisée. }
+    NotFound:
+      description: Ressource introuvable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Ressource introuvable. }
+    TrackNotFound:
+      description: Référence inconnue ou code de suivi invalide (réponse indistincte).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Dossier introuvable ou code de suivi invalide. }
+    ClientNotFound:
+      description: Dossier inexistant ou n'appartenant pas au client connecté.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Dossier introuvable. }
+    ValidationFailed:
+      description: Données invalides ou règle métier non respectée.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+    CsrfMismatch:
+      description: Jeton CSRF absent ou expiré (appeler de nouveau `GET /sanctum/csrf-cookie`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyLogin:
+      description: Trop de tentatives (5/min par email + IP).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Trop de tentatives de connexion. Réessayez dans une minute. }
+    TooManyPublic:
+      description: Trop de requêtes sur le portail public (10/min par IP).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Trop de requêtes. Réessayez dans une minute. }
+    TooManyApi:
+      description: Limite de l'API authentifiée atteinte (180/min par utilisateur).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ComplaintDetail:
+      description: Dossier à jour.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ComplaintDetailEnvelope' }
+    ComplaintDetailCreated:
+      description: Élément ajouté ; dossier à jour.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ComplaintDetailEnvelope' }
+    ExportFile:
+      description: Fichier exporté (`Content-Disposition` attachment, nom `tsita-gest-<type>-AAAAMMJJ-HHMMSS.<ext>`).
+      headers:
+        Content-Disposition:
+          schema: { type: string }
+      content:
+        text/csv:
+          schema: { type: string, description: CSV UTF-8 avec BOM, séparateur `;`. }
+        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+          schema: { type: string, contentMediaType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet }
+        application/pdf:
+          schema: { type: string, contentMediaType: application/pdf }
+
+  schemas:
+    # ---------------------------------------------------------- Erreurs
+    Error:
+      type: object
+      description: Erreur simple.
+      required: [message]
+      properties:
+        message: { type: string }
+    ValidationError:
+      type: object
+      description: Erreur de validation ou de règle métier (422). Clé `general` si l'erreur ne concerne pas un champ.
+      required: [message, errors]
+      properties:
+        message: { type: string, example: Le champ reason est obligatoire. }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          example: { reason: [Le champ reason est obligatoire.] }
+    Message:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+    PaginationMeta:
+      type: object
+      description: Métadonnées de pagination.
+      required: [current_page, last_page, per_page, total]
+      properties:
+        current_page: { type: integer }
+        last_page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+
+    # ---------------------------------------------------------- Types de base
+    DateTime:
+      type: string
+      format: date-time
+      description: ISO 8601 avec décalage +01:00 (Africa/Brazzaville).
+      example: '2026-04-14T09:30:00+01:00'
+    NullableDateTime:
+      type: [string, 'null']
+      format: date-time
+      description: ISO 8601 avec décalage +01:00, ou null.
+      example: '2026-04-14T09:30:00+01:00'
+    Reference:
+      type: string
+      pattern: '^TG-BSCA-\d{4}-\d{6}$'
+      example: TG-BSCA-2026-000123
+    Amount:
+      type: [string, 'null']
+      pattern: '^-?\d+\.\d{2}$'
+      description: Montant décimal en chaîne (2 décimales) ou null. Toujours accompagné de `currency`.
+      example: '150000.00'
+    Currency:
+      type: [string, 'null']
+      enum: [XAF, EUR, USD, CNY, XOF, null]
+      description: Devise ISO 4217 ou null.
+    AmountInput:
+      type: [number, string, 'null']
+      minimum: 0
+      maximum: 9999999999999.99
+      description: Montant ≥ 0, au plus 2 décimales. Si fourni, `currency` est obligatoire.
+    CurrencyInput:
+      type: [string, 'null']
+      enum: [XAF, EUR, USD, CNY, XOF, null]
+      description: Obligatoire si `amount` est fourni.
+    IdName:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+    IdLabel:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: integer }
+        label: { type: string }
+    CodeLabel:
+      type: object
+      required: [code, label]
+      properties:
+        code: { type: string }
+        label: { type: string }
+    ValueLabel:
+      type: object
+      required: [value, label]
+      properties:
+        value: { type: string }
+        label: { type: string }
+    ReplyChannel:
+      type: string
+      enum: [courriel, courrier, telephone]
+      description: Canal de réponse préféré du client. En entrée, l'alias rétrocompatible `email` est converti en `courriel`.
+
+    # ---------------------------------------------------------- Énumérations
+    ComplaintStatus:
+      type: string
+      description: |
+        Statut interne. brouillon (Brouillon), recu (Reçu), a_qualifier (À qualifier), affecte (Affecté),
+        en_investigation (En investigation), attente_information (Attente d'information),
+        solution_proposee (Solution proposée), a_valider (À valider), reponse_envoyee (Réponse envoyée),
+        cloture (Clôturé), reouvert (Réouvert).
+      enum: [brouillon, recu, a_qualifier, affecte, en_investigation, attente_information, solution_proposee, a_valider, reponse_envoyee, cloture, reouvert]
+    ClientStatus:
+      type: string
+      description: Statut simplifié affiché au client (jamais le statut interne).
+      enum: [recue, en_cours, information_demandee, reponse_envoyee, cloturee, reouverte]
+    Decision:
+      type: string
+      description: fondee, partiellement_fondee, non_fondee, irrecevable_motivee.
+      enum: [fondee, partiellement_fondee, non_fondee, irrecevable_motivee]
+    Priority:
+      type: string
+      enum: [basse, normale, haute, critique]
+    RiskLevel:
+      type: string
+      enum: [faible, moyen, eleve]
+    DeadlineFlag:
+      type: string
+      description: ok (Dans les délais), a_risque, en_retard, clos_en_retard, sans_regle (Règle à valider).
+      enum: [ok, a_risque, en_retard, clos_en_retard, sans_regle]
+    DeadlineKind:
+      type: string
+      enum: [accuse, reponse_finale, prealerte, controle]
+    DeadlineStatus:
+      type: string
+      enum: [en_cours, respectee, depassee, respectee_en_retard]
+    DeadlineUnit:
+      type: string
+      description: calendar (jours calendaires) ou business (jours ouvrés).
+      enum: [calendar, business]
+    DeliveryStatus:
+      type: string
+      enum: [en_attente, envoye, echec]
+    MessageKind:
+      type: string
+      enum: [client_message, internal_note]
+    MessageDirection:
+      type: string
+      enum: [entrant, sortant]
+    AttachmentClassification:
+      type: string
+      enum: [client, interne, confidentiel]
+    Visibility:
+      type: string
+      enum: [internal, client]
+    ScanStatus:
+      type: string
+      enum: [en_attente, sain, rejete]
+    EventType:
+      type: string
+      enum: [created, acknowledged, qualified, assigned, status_changed, message, attachment, solution, approval, response_sent, reopened, duplicate, escalated, deadline]
+    SolutionType:
+      type: string
+      enum: [remboursement, correction_operation, explication_motivee, autre_mesure, non_fondement]
+    SolutionStatus:
+      type: string
+      enum: [brouillon, soumise, approuvee_n1, approuvee, rejetee]
+    ApprovalDecision:
+      type: string
+      enum: [approuve, rejete]
+    ControlResult:
+      type: string
+      enum: [conforme, non_conforme, a_revoir]
+    TaskStatus:
+      type: string
+      enum: [a_faire, en_cours, terminee]
+    QualityActionStatus:
+      type: string
+      enum: [planifiee, en_cours, realisee, verifiee]
+    RuleSourceType:
+      type: string
+      enum: [juridique, interne, demonstration]
+    RuleStatus:
+      type: string
+      enum: [brouillon, a_valider, valide, retire]
+    ImportStatus:
+      type: string
+      enum: [en_cours, termine, termine_avec_anomalies, echec]
+    AnomalyResolution:
+      type: string
+      enum: [a_traiter, resolu, ignore]
+    TemplateKind:
+      type: string
+      enum: [accuse, attente, reponse, cloture]
+    ExportFormat:
+      type: string
+      enum: [csv, xlsx, pdf]
+    Role:
+      type: string
+      enum: [client, agent_accueil, gestionnaire, responsable, qualite, conformite, direction, admin]
+    Permission:
+      type: string
+      enum:
+        - complaints.view
+        - complaints.create
+        - complaints.qualify
+        - complaints.assign
+        - complaints.transition
+        - complaints.respond
+        - complaints.reopen
+        - complaints.export
+        - solutions.propose
+        - solutions.approve_n1
+        - solutions.approve_n2
+        - quality.manage
+        - quality.control
+        - reports.view
+        - reports.validate
+        - dashboard.view
+        - deadlines.view
+        - admin.users
+        - admin.referentials
+        - admin.rules
+        - admin.rules.validate
+        - admin.audit
+        - admin.imports
+
+    # ---------------------------------------------------------- Auth / utilisateurs
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 190 }
+        password: { type: string, maxLength: 255, format: password }
+        mfa_code: { type: [string, 'null'], pattern: '^\d{6}$', description: Code TOTP si la MFA est activée. }
+    MfaRequired:
+      type: object
+      required: [mfa_required]
+      properties:
+        mfa_required: { type: boolean, const: true }
+    User:
+      type: object
+      description: Utilisateur (UserResource).
+      required: [id, name, email, role, role_label, agency, entity, mfa_enabled, permissions]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        role_label: { type: string, example: Gestionnaire }
+        agency:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        entity:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        mfa_enabled: { type: boolean }
+        mfa_required: { type: boolean, description: "La MFA est imposée à ce profil (MFA_ENFORCED_ROLES)." }
+        mfa_enrollment_required:
+          type: boolean
+          description: "true = MFA imposée mais non configurée : seules /auth/me, /auth/mfa/setup, /auth/mfa/confirm et /auth/logout répondent ; toute autre route renvoie 403 {message, mfa_enrollment_required: true}."
+        permissions:
+          type: array
+          items: { $ref: '#/components/schemas/Permission' }
+    UserEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/User' }
+    AdminUser:
+      description: Utilisateur vu par l'administration (AdminUserResource).
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [phone, is_active, locked_until, last_login_at, customer_id, created_at]
+          properties:
+            phone: { type: [string, 'null'] }
+            is_active: { type: boolean }
+            locked_until: { $ref: '#/components/schemas/NullableDateTime' }
+            last_login_at: { $ref: '#/components/schemas/NullableDateTime' }
+            customer_id: { type: [integer, 'null'] }
+            created_at: { $ref: '#/components/schemas/NullableDateTime' }
+    AdminUserEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AdminUser' }
+    AdminUserInput:
+      type: object
+      description: Champs obligatoires à la création (name, email, password, role) ; facultatifs en modification.
+      properties:
+        name: { type: string, minLength: 2, maxLength: 150 }
+        email: { type: string, format: email, maxLength: 190, description: Unique (normalisé en minuscules). }
+        password: { type: string, minLength: 12, maxLength: 255, format: password, description: '≥ 12 caractères, majuscule, minuscule, chiffre, symbole.' }
+        role: { $ref: '#/components/schemas/Role' }
+        agency_id: { type: [integer, 'null'] }
+        entity_id: { type: [integer, 'null'] }
+        customer_id: { type: [integer, 'null'] }
+        phone: { type: [string, 'null'], maxLength: 40 }
+        is_active: { type: boolean }
+        unlock: { type: boolean, description: Remet à zéro les échecs et le verrouillage. }
+        reset_mfa: { type: boolean, description: Désactive la MFA et efface le secret. }
+
+    # ---------------------------------------------------------- Public / client
+    TrackRequest:
+      type: object
+      required: [reference, tracking_code]
+      properties:
+        reference:
+          type: string
+          maxLength: 25
+          pattern: '^[Tt][Gg]-[Bb][Ss][Cc][Aa]-\d{4}-\d{6}$'
+          description: Référence du dossier (insensible à la casse).
+          example: TG-BSCA-2026-000123
+        tracking_code: { type: string, minLength: 8, maxLength: 12 }
+    PublicComplaintRequest:
+      type: object
+      required: [full_name, email, product_id, subject, description, preferred_channel, consent]
+      properties:
+        full_name: { type: string, minLength: 2, maxLength: 150 }
+        email: { type: string, format: email, maxLength: 190 }
+        phone: { type: [string, 'null'], maxLength: 40, pattern: '^[0-9+().\s-]{6,40}$' }
+        customer_number: { type: [string, 'null'], maxLength: 40, pattern: '^[A-Za-z0-9-]+$' }
+        product_id: { type: integer, description: Produit actif. }
+        category_id: { type: [integer, 'null'], description: Catégorie active. }
+        agency_id: { type: [integer, 'null'], description: Agence active. }
+        subject: { type: string, minLength: 3, maxLength: 190 }
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        operation_date: { type: [string, 'null'], format: date, description: '≤ aujourd''hui.' }
+        amount: { $ref: '#/components/schemas/AmountInput' }
+        currency: { $ref: '#/components/schemas/CurrencyInput' }
+        preferred_channel: { $ref: '#/components/schemas/ReplyChannel' }
+        consent: { type: boolean, description: 'Doit être accepté (true, 1, "yes", "on").' }
+        attachments[]:
+          type: array
+          maxItems: 5
+          items: { type: string, format: binary, description: 'pdf, jpg, jpeg, png ; ≤ 10 Mo' }
+    PublicComplaintConfirmation:
+      type: object
+      description: Confirmation de dépôt (ComplaintIntakeService::confirmation). Le code de suivi n'est montré qu'une fois.
+      required: [reference, tracking_code, received_at, acknowledgment_due_at, final_response_due_at, rule_is_demo]
+      properties:
+        reference: { $ref: '#/components/schemas/Reference' }
+        tracking_code: { type: string, description: Code de suivi (8 caractères). }
+        received_at: { $ref: '#/components/schemas/NullableDateTime' }
+        acknowledgment_due_at: { $ref: '#/components/schemas/NullableDateTime' }
+        final_response_due_at: { $ref: '#/components/schemas/NullableDateTime' }
+        rule_is_demo: { type: boolean, description: Vrai si l'échéance est calculée avec une règle de démonstration non validée. }
+    ReopenConfirmationEnvelope:
+      type: object
+      description: Confirmation d'un dossier enfant créé par réouverture (nouveau code de suivi).
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - $ref: '#/components/schemas/PublicComplaintConfirmation'
+            - type: object
+              required: [parent_reference]
+              properties:
+                parent_reference: { $ref: '#/components/schemas/Reference' }
+    ClientComplaintSummary:
+      type: object
+      description: Vue client résumée (ClientViewPresenter::summary). Aucune donnée interne.
+      required: [reference, subject, category_label, product_label, client_status, client_status_label, received_at, last_update_at, next_step, can_reopen]
+      properties:
+        reference: { $ref: '#/components/schemas/Reference' }
+        subject: { type: string }
+        category_label: { type: [string, 'null'] }
+        product_label: { type: [string, 'null'] }
+        client_status: { $ref: '#/components/schemas/ClientStatus' }
+        client_status_label: { type: string, example: En cours d'analyse }
+        received_at: { $ref: '#/components/schemas/NullableDateTime' }
+        last_update_at: { $ref: '#/components/schemas/NullableDateTime' }
+        next_step: { type: string, description: Prochaine étape rédigée pour le client. }
+        can_reopen: { type: boolean }
+    ClientComplaintView:
+      description: |
+        Vue client complète (ClientViewPresenter::present). N'expose jamais : notes internes, noms d'agents,
+        avis de contrôle, pièces internes, statut interne, motifs internes des transitions.
+      allOf:
+        - $ref: '#/components/schemas/ClientComplaintSummary'
+        - type: object
+          required: [final_response, timeline, messages, documents]
+          properties:
+            final_response:
+              oneOf:
+                - type: object
+                  required: [sent_at, body]
+                  properties:
+                    sent_at: { $ref: '#/components/schemas/NullableDateTime' }
+                    body: { type: [string, 'null'] }
+                - type: 'null'
+            timeline:
+              type: array
+              description: Événements de visibilité client uniquement.
+              items:
+                type: object
+                required: [date, title, description]
+                properties:
+                  date: { $ref: '#/components/schemas/NullableDateTime' }
+                  title: { type: string }
+                  description: { type: [string, 'null'] }
+            messages:
+              type: array
+              description: Messages clients entrants ou envoyés avec succès.
+              items:
+                type: object
+                required: [date, from, body]
+                properties:
+                  date: { $ref: '#/components/schemas/NullableDateTime' }
+                  from: { type: string, enum: [client, bsca] }
+                  body: { type: string }
+            documents:
+              type: array
+              description: Pièces de visibilité client non rejetées.
+              items:
+                type: object
+                required: [name, date, from]
+                properties:
+                  name: { type: string }
+                  date: { $ref: '#/components/schemas/NullableDateTime' }
+                  from: { type: string, enum: [client, bsca] }
+    ClientComplaintViewEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ClientComplaintView' }
+
+    # ---------------------------------------------------------- Référentiels
+    InternalReferentials:
+      type: object
+      required: [agencies, entities, categories, products, channels, statuses, decisions, priorities, solution_types, templates, users]
+      properties:
+        agencies:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              name: { type: string }
+              city: { type: string }
+              is_active: { type: boolean }
+        entities:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              name: { type: string }
+              is_active: { type: boolean }
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              label: { type: string }
+              is_active: { type: boolean }
+              version: { type: integer }
+        products:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              label: { type: string }
+              is_active: { type: boolean }
+        channels:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              label: { type: string }
+              is_active: { type: boolean }
+        statuses:
+          type: array
+          items: { $ref: '#/components/schemas/ValueLabel' }
+        decisions:
+          type: array
+          items: { $ref: '#/components/schemas/ValueLabel' }
+        priorities:
+          type: array
+          items: { $ref: '#/components/schemas/ValueLabel' }
+        solution_types:
+          type: array
+          items: { $ref: '#/components/schemas/ValueLabel' }
+        templates:
+          type: array
+          description: Modèles de réponse actifs.
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              kind: { $ref: '#/components/schemas/TemplateKind' }
+              label: { type: string }
+              subject: { type: string }
+              body: { type: string }
+              version: { type: integer }
+        users:
+          type: array
+          description: Collaborateurs actifs affectables (gestionnaire, responsable, agent_accueil, qualite, conformite).
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+              role: { $ref: '#/components/schemas/Role' }
+              entity_id: { type: [integer, 'null'] }
+
+    CustomerSearchItem:
+      type: object
+      required: [id, full_name, email, phone, customer_number_masked, preferred_channel, complaints_count]
+      properties:
+        id: { type: integer }
+        full_name: { type: string }
+        email: { type: [string, 'null'] }
+        phone: { type: [string, 'null'] }
+        customer_number_masked: { type: [string, 'null'], example: '••••••4821' }
+        preferred_channel:
+          oneOf:
+            - $ref: '#/components/schemas/ReplyChannel'
+            - type: 'null'
+        complaints_count: { type: integer }
+
+    # ---------------------------------------------------------- Réclamations
+    StoreComplaintRequest:
+      type: object
+      description: Saisie agent. `full_name` obligatoire si `customer_id` est absent.
+      required: [product_id, channel, subject, description]
+      properties:
+        customer_id: { type: [integer, 'null'], description: Rattachement à un client existant. }
+        full_name: { type: [string, 'null'], minLength: 2, maxLength: 150 }
+        email: { type: [string, 'null'], format: email, maxLength: 190 }
+        phone: { type: [string, 'null'], maxLength: 40, pattern: '^[0-9+().\s-]{6,40}$' }
+        customer_number: { type: [string, 'null'], maxLength: 40, pattern: '^[A-Za-z0-9-]+$' }
+        product_id: { type: integer, description: Produit actif. }
+        category_id: { type: [integer, 'null'] }
+        agency_id: { type: [integer, 'null'] }
+        receiving_agency_id: { type: [integer, 'null'], description: Agence de réception active. }
+        channel: { type: string, description: Code de canal actif. }
+        received_at: { type: [string, 'null'], format: date-time, description: Date effective de réception (≤ maintenant). }
+        subject: { type: string, minLength: 3, maxLength: 190 }
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        operation_date: { type: [string, 'null'], format: date }
+        amount: { $ref: '#/components/schemas/AmountInput' }
+        currency: { $ref: '#/components/schemas/CurrencyInput' }
+        preferred_channel:
+          oneOf:
+            - $ref: '#/components/schemas/ReplyChannel'
+            - type: 'null'
+        consent: { type: [boolean, 'null'] }
+        attachments[]:
+          type: array
+          maxItems: 5
+          items: { type: string, format: binary, description: 'pdf, jpg, jpeg, png ; ≤ 10 Mo' }
+    QualifyComplaintRequest:
+      type: object
+      description: Qualification (tous champs facultatifs sauf `reason`).
+      required: [reason]
+      properties:
+        category_id: { type: [integer, 'null'] }
+        product_id: { type: [integer, 'null'] }
+        processing_entity_id: { type: [integer, 'null'] }
+        priority: { $ref: '#/components/schemas/Priority' }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        amount: { $ref: '#/components/schemas/AmountInput' }
+        currency: { $ref: '#/components/schemas/CurrencyInput' }
+        subject: { type: string, minLength: 3, maxLength: 190 }
+        reason: { type: string, minLength: 3, maxLength: 2000, description: Motif (tracé dans l'audit). }
+    ComplaintListItem:
+      type: object
+      description: Élément de liste (ComplaintListItemResource). `customer_name` masqué (« J. M*** ») pour la direction.
+      required: [id, reference, subject, customer_name, channel, receiving_agency, processing_entity, category, status, status_label, decision, decision_label, priority, received_at, due_at, deadline_flag, deadline_flag_label, owner]
+      properties:
+        id: { type: integer }
+        reference: { $ref: '#/components/schemas/Reference' }
+        subject: { type: string }
+        customer_name: { type: [string, 'null'] }
+        channel:
+          oneOf:
+            - $ref: '#/components/schemas/CodeLabel'
+            - type: 'null'
+        receiving_agency:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        processing_entity:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/IdLabel'
+            - type: 'null'
+        status: { $ref: '#/components/schemas/ComplaintStatus' }
+        status_label: { type: string }
+        decision:
+          oneOf:
+            - $ref: '#/components/schemas/Decision'
+            - type: 'null'
+        decision_label: { type: [string, 'null'] }
+        priority: { $ref: '#/components/schemas/Priority' }
+        received_at: { $ref: '#/components/schemas/NullableDateTime' }
+        due_at:
+          $ref: '#/components/schemas/NullableDateTime'
+          description: Échéance de réponse finale.
+        deadline_flag: { $ref: '#/components/schemas/DeadlineFlag' }
+        deadline_flag_label: { type: string }
+        owner:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+    Approval:
+      type: object
+      description: Décision d'approbation d'une solution.
+      required: [id, level, approver, decision, decision_label, comment, decided_at]
+      properties:
+        id: { type: integer }
+        level: { type: integer, enum: [1, 2], description: '1 = responsable (N1), 2 = conformité (N2).' }
+        approver:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        decision: { $ref: '#/components/schemas/ApprovalDecision' }
+        decision_label: { type: string }
+        comment: { type: [string, 'null'] }
+        decided_at: { $ref: '#/components/schemas/NullableDateTime' }
+    Solution:
+      type: object
+      description: Proposition de solution versionnée (SolutionResource).
+      required: [id, version, complaint, type, type_label, description, root_cause, decision, decision_label, status, status_label, amount, currency, proposed_by, submitted_at, requires_n2, created_at, approvals]
+      properties:
+        id: { type: integer }
+        version: { type: integer }
+        complaint:
+          description: Présent dans les listes et réponses d'action ; null dans `ComplaintDetail.solutions`.
+          oneOf:
+            - type: object
+              required: [id, reference, subject]
+              properties:
+                id: { type: integer }
+                reference: { $ref: '#/components/schemas/Reference' }
+                subject: { type: string }
+            - type: 'null'
+        type: { $ref: '#/components/schemas/SolutionType' }
+        type_label: { type: string }
+        description: { type: string }
+        root_cause: { type: [string, 'null'] }
+        decision: { $ref: '#/components/schemas/Decision' }
+        decision_label: { type: string }
+        status: { $ref: '#/components/schemas/SolutionStatus' }
+        status_label: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        proposed_by:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        submitted_at: { $ref: '#/components/schemas/NullableDateTime' }
+        requires_n2: { type: boolean, description: Approbation N2 (conformité) requise (montant ≥ seuil). }
+        created_at: { $ref: '#/components/schemas/NullableDateTime' }
+        approvals:
+          type: array
+          items: { $ref: '#/components/schemas/Approval' }
+    SolutionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Solution' }
+    Task:
+      type: object
+      description: Tâche de traitement (TaskResource).
+      required: [id, complaint_id, title, description, assignee, due_at, status, status_label, completed_at, created_at]
+      properties:
+        id: { type: integer }
+        complaint_id: { type: integer }
+        title: { type: string }
+        description: { type: [string, 'null'] }
+        assignee:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        due_at: { $ref: '#/components/schemas/NullableDateTime' }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        status_label: { type: string }
+        completed_at: { $ref: '#/components/schemas/NullableDateTime' }
+        created_at: { $ref: '#/components/schemas/NullableDateTime' }
+    TaskEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Task' }
+    TaskInput:
+      type: object
+      properties:
+        title: { type: string, minLength: 3, maxLength: 190 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+        assignee_id: { type: [integer, 'null'] }
+        due_at: { type: [string, 'null'], format: date-time, description: Date ou date-heure. }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+    ComplaintDeadline:
+      type: object
+      required: [id, kind, kind_label, unit, due_at, initial_due_at, announced_at, met_at, status, status_label, rule]
+      properties:
+        id: { type: integer }
+        kind: { $ref: '#/components/schemas/DeadlineKind' }
+        kind_label: { type: string }
+        unit: { $ref: '#/components/schemas/DeadlineUnit' }
+        due_at: { $ref: '#/components/schemas/NullableDateTime' }
+        initial_due_at: { $ref: '#/components/schemas/NullableDateTime' }
+        announced_at: { $ref: '#/components/schemas/NullableDateTime' }
+        met_at: { $ref: '#/components/schemas/NullableDateTime' }
+        status: { $ref: '#/components/schemas/DeadlineStatus' }
+        status_label: { type: string }
+        rule:
+          oneOf:
+            - type: object
+              required: [id, code, label, version, is_demo, source_type]
+              properties:
+                id: { type: integer }
+                code: { type: string }
+                label: { type: string }
+                version: { type: [integer, 'null'] }
+                is_demo: { type: boolean }
+                source_type: { $ref: '#/components/schemas/RuleSourceType' }
+            - type: 'null'
+    TimelineEvent:
+      type: object
+      required: [id, date, type, type_label, title, description, visibility, actor, reason, from_status, to_status]
+      properties:
+        id: { type: integer }
+        date: { $ref: '#/components/schemas/NullableDateTime' }
+        type: { $ref: '#/components/schemas/EventType' }
+        type_label: { type: string }
+        title: { type: string }
+        description: { type: [string, 'null'] }
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        actor:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        reason: { type: [string, 'null'] }
+        from_status:
+          oneOf:
+            - $ref: '#/components/schemas/ComplaintStatus'
+            - type: 'null'
+        to_status:
+          oneOf:
+            - $ref: '#/components/schemas/ComplaintStatus'
+            - type: 'null'
+    AttachmentItem:
+      type: object
+      required: [id, name, mime, size, sha256, classification, classification_label, visibility, scan_status, uploaded_by_client, uploaded_by, date, can_download, download_url]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        mime: { type: string }
+        size: { type: integer, description: Taille en octets. }
+        sha256: { type: string }
+        classification: { $ref: '#/components/schemas/AttachmentClassification' }
+        classification_label: { type: string }
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        scan_status: { $ref: '#/components/schemas/ScanStatus' }
+        uploaded_by_client: { type: boolean }
+        uploaded_by:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        date: { $ref: '#/components/schemas/NullableDateTime' }
+        can_download: { type: boolean }
+        download_url: { type: string, example: /api/v1/attachments/12/download }
+    MessageItem:
+      type: object
+      required: [id, kind, kind_label, direction, channel, author, author_is_client, subject, body, delivery_status, delivery_status_label, sent_at, date]
+      properties:
+        id: { type: integer }
+        kind: { $ref: '#/components/schemas/MessageKind' }
+        kind_label: { type: string }
+        direction:
+          oneOf:
+            - $ref: '#/components/schemas/MessageDirection'
+            - type: 'null'
+        channel:
+          oneOf:
+            - $ref: '#/components/schemas/CodeLabel'
+            - type: 'null'
+        author:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        author_is_client: { type: boolean }
+        subject: { type: [string, 'null'] }
+        body: { type: string }
+        delivery_status:
+          oneOf:
+            - $ref: '#/components/schemas/DeliveryStatus'
+            - type: 'null'
+        delivery_status_label: { type: [string, 'null'] }
+        sent_at: { $ref: '#/components/schemas/NullableDateTime' }
+        date: { $ref: '#/components/schemas/NullableDateTime' }
+    ControlItem:
+      type: object
+      required: [id, result, result_label, findings, controller, controlled_at]
+      properties:
+        id: { type: integer }
+        result: { $ref: '#/components/schemas/ControlResult' }
+        result_label: { type: string }
+        findings: { type: [string, 'null'] }
+        controller:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        controlled_at: { $ref: '#/components/schemas/NullableDateTime' }
+    ComplaintAuditItem:
+      type: object
+      required: [id, date, action, user, reason, before, after]
+      properties:
+        id: { type: integer }
+        date: { $ref: '#/components/schemas/NullableDateTime' }
+        action: { type: string }
+        user:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        reason: { type: [string, 'null'] }
+        before: { type: [object, 'null'], additionalProperties: true }
+        after: { type: [object, 'null'], additionalProperties: true }
+    ComplaintDetail:
+      description: |
+        Détail d'un dossier (ComplaintDetailResource) = ComplaintListItem + champs de détail.
+        Pour un utilisateur sans accès aux données sensibles (direction) : `customer.full_name` masqué,
+        `email`/`phone` null, `attachments`, `messages` et `audit` vides.
+      allOf:
+        - $ref: '#/components/schemas/ComplaintListItem'
+        - type: object
+          required: [description, customer, product, amount, currency, amount_flagged, risk_level, operation_date, acknowledged_at, acknowledgment_status, final_response_at, closed_at, mediation_requested_at, deputy, parent, children, duplicate_of, source, next_action, deadlines, timeline, attachments, messages, tasks, solutions, controls, audit, allowed_transitions, can]
+          properties:
+            description: { type: string }
+            customer:
+              oneOf:
+                - type: object
+                  required: [id, full_name, email, phone]
+                  properties:
+                    id: { type: integer }
+                    full_name: { type: [string, 'null'] }
+                    email: { type: [string, 'null'] }
+                    phone: { type: [string, 'null'] }
+                - type: 'null'
+            product:
+              oneOf:
+                - $ref: '#/components/schemas/IdLabel'
+                - type: 'null'
+            amount: { $ref: '#/components/schemas/Amount' }
+            currency: { $ref: '#/components/schemas/Currency' }
+            amount_flagged: { type: boolean, description: Montant signalé (seuil ou incohérence). }
+            risk_level: { $ref: '#/components/schemas/RiskLevel' }
+            operation_date: { type: [string, 'null'], format: date }
+            acknowledged_at: { $ref: '#/components/schemas/NullableDateTime' }
+            acknowledgment_status: { $ref: '#/components/schemas/DeliveryStatus' }
+            final_response_at: { $ref: '#/components/schemas/NullableDateTime' }
+            closed_at: { $ref: '#/components/schemas/NullableDateTime' }
+            mediation_requested_at: { $ref: '#/components/schemas/NullableDateTime' }
+            deputy:
+              oneOf:
+                - $ref: '#/components/schemas/IdName'
+                - type: 'null'
+            parent:
+              oneOf:
+                - type: object
+                  required: [id, reference]
+                  properties:
+                    id: { type: integer }
+                    reference: { $ref: '#/components/schemas/Reference' }
+                - type: 'null'
+            children:
+              type: array
+              items:
+                type: object
+                required: [id, reference, status, status_label]
+                properties:
+                  id: { type: integer }
+                  reference: { $ref: '#/components/schemas/Reference' }
+                  status: { $ref: '#/components/schemas/ComplaintStatus' }
+                  status_label: { type: string }
+            duplicate_of:
+              oneOf:
+                - type: object
+                  required: [id, reference]
+                  properties:
+                    id: { type: integer }
+                    reference: { $ref: '#/components/schemas/Reference' }
+                - type: 'null'
+            source:
+              description: Origine d'un dossier importé.
+              oneOf:
+                - type: object
+                  required: [system, id, status_label]
+                  properties:
+                    system: { type: string }
+                    id: { type: [string, 'null'] }
+                    status_label: { type: [string, 'null'] }
+                - type: 'null'
+            next_action: { type: string, description: Prochaine action calculée (texte). }
+            deadlines:
+              type: array
+              items: { $ref: '#/components/schemas/ComplaintDeadline' }
+            timeline:
+              type: array
+              description: Événements internes et client, du plus récent au plus ancien.
+              items: { $ref: '#/components/schemas/TimelineEvent' }
+            attachments:
+              type: array
+              items: { $ref: '#/components/schemas/AttachmentItem' }
+            messages:
+              type: array
+              description: Messages clients et notes internes, ordre chronologique.
+              items: { $ref: '#/components/schemas/MessageItem' }
+            tasks:
+              type: array
+              items: { $ref: '#/components/schemas/Task' }
+            solutions:
+              type: array
+              description: Versions de solution (plus récente d'abord) ; `complaint` y vaut null.
+              items: { $ref: '#/components/schemas/Solution' }
+            controls:
+              type: array
+              items: { $ref: '#/components/schemas/ControlItem' }
+            audit:
+              type: array
+              description: 50 dernières entrées d'audit du dossier.
+              items: { $ref: '#/components/schemas/ComplaintAuditItem' }
+            allowed_transitions:
+              type: array
+              description: Transitions manuelles possibles pour l'utilisateur (vide sans `complaints.transition`).
+              items: { $ref: '#/components/schemas/ValueLabel' }
+            can:
+              type: object
+              description: Actions permises à l'utilisateur courant sur ce dossier.
+              required: [qualify, assign, transition, respond, acknowledge, note, attach, reopen, propose, approve, mark_duplicate, control, manage_tasks]
+              properties:
+                qualify: { type: boolean }
+                assign: { type: boolean }
+                transition: { type: boolean }
+                respond: { type: boolean }
+                acknowledge: { type: boolean }
+                note: { type: boolean }
+                attach: { type: boolean }
+                reopen: { type: boolean }
+                propose: { type: boolean }
+                approve: { type: boolean }
+                mark_duplicate: { type: boolean }
+                control: { type: boolean }
+                manage_tasks: { type: boolean }
+    ComplaintDetailEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ComplaintDetail' }
+
+    # ---------------------------------------------------------- Pilotage
+    TreatmentRate:
+      type: object
+      description: Taux de traitement = cohorte traitée ÷ reçues (en %, 1 décimale ; null si dénominateur nul).
+      required: [numerator, denominator, value]
+      properties:
+        numerator: { type: integer }
+        denominator: { type: integer }
+        value: { type: [number, 'null'], example: 87.5 }
+    Kpis:
+      type: object
+      description: Indicateurs (références uniques, hors brouillons et doublons, périmètre de l'utilisateur).
+      required: [received, responded, stock, at_risk, cohort_treated, late_open, late_closed, treatment_rate]
+      properties:
+        received: { type: integer, description: Reçues dans la période. }
+        responded: { type: integer, description: Réponses finales dans la période. }
+        stock: { type: integer, description: Sans réponse finale à la date de calcul. }
+        at_risk: { type: integer, description: Ouverts non en retard, pré-alerte atteinte ou accusé à échéance. }
+        cohort_treated: { type: integer, description: Reçues dans la période et répondues au plus tard à la date de calcul. }
+        late_open: { type: integer, description: Ouverts dont l'échéance finale est dépassée. }
+        late_closed: { type: integer, description: Répondus dans la période après l'échéance. }
+        treatment_rate: { $ref: '#/components/schemas/TreatmentRate' }
+    KpiMeta:
+      type: object
+      description: Contexte de calcul des indicateurs.
+      required: [from, to, as_of, timezone, filters, definitions, rule_is_demo, rule_version, computed_at]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        as_of: { type: string, format: date }
+        timezone: { type: string, example: Africa/Brazzaville }
+        filters:
+          description: Filtres de dimension actifs (agency_id, entity_id, category_id, product_id, channel, status). Tableau vide `[]` si aucun.
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              maxItems: 0
+        definitions:
+          type: object
+          description: Définition textuelle de chaque indicateur (clé → texte).
+          additionalProperties: { type: string }
+        rule_is_demo: { type: boolean }
+        rule_version: { type: [string, 'null'], description: Libellé de version de la règle de réponse finale applicable. }
+        computed_at: { $ref: '#/components/schemas/DateTime' }
+    Dashboard:
+      type: object
+      required: [kpis, monthly, by_category, by_channel, priorities, recent_events, meta]
+      properties:
+        kpis: { $ref: '#/components/schemas/Kpis' }
+        monthly:
+          type: array
+          items:
+            type: object
+            required: [month, label, received, responded]
+            properties:
+              month: { type: string, pattern: '^\d{4}-\d{2}$', example: 2026-04 }
+              label: { type: string, example: Avr }
+              received: { type: integer }
+              responded: { type: integer }
+        by_category:
+          type: array
+          items:
+            type: object
+            required: [label, count]
+            properties:
+              label: { type: string }
+              count: { type: integer }
+        by_channel:
+          type: array
+          items:
+            type: object
+            required: [label, count]
+            properties:
+              label: { type: string }
+              count: { type: integer }
+        priorities:
+          type: array
+          maxItems: 5
+          description: Dossiers ouverts prioritaires (en retard puis par échéance).
+          items: { $ref: '#/components/schemas/ComplaintListItem' }
+        recent_events:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [date, reference, complaint_id, title, actor]
+            properties:
+              date: { $ref: '#/components/schemas/NullableDateTime' }
+              reference: { type: [string, 'null'] }
+              complaint_id: { type: integer }
+              title: { type: string }
+              actor: { type: [string, 'null'], description: Nom de l'acteur. }
+        meta: { $ref: '#/components/schemas/KpiMeta' }
+    DeadlineQueueItem:
+      description: Élément de file d'échéance = ComplaintListItem + dates d'échéance.
+      allOf:
+        - $ref: '#/components/schemas/ComplaintListItem'
+        - type: object
+          required: [prealert_at, acknowledgment_due_at, initial_due_at, announced_at, days_remaining, final_response_at]
+          properties:
+            prealert_at: { $ref: '#/components/schemas/NullableDateTime' }
+            acknowledgment_due_at: { $ref: '#/components/schemas/NullableDateTime' }
+            initial_due_at: { $ref: '#/components/schemas/NullableDateTime' }
+            announced_at: { $ref: '#/components/schemas/NullableDateTime' }
+            days_remaining: { type: [integer, 'null'], description: Jours restants (négatif si dépassé) ; null si répondu. }
+            final_response_at: { $ref: '#/components/schemas/NullableDateTime' }
+    DeadlinesPage:
+      type: object
+      required: [data, meta, summary, rules, rule_is_demo]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DeadlineQueueItem' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+        summary:
+          type: object
+          required: [a_risque, en_retard, clos_en_retard]
+          properties:
+            a_risque: { type: integer }
+            en_retard: { type: integer }
+            clos_en_retard: { type: integer }
+        rules:
+          type: array
+          description: Règles de délai actives.
+          items: { $ref: '#/components/schemas/DeadlineRule' }
+        rule_is_demo: { type: boolean }
+    FlowRow:
+      type: object
+      required: [id, label, inflow, outflow, closing_stock]
+      properties:
+        id: { type: [integer, 'null'] }
+        label: { type: string }
+        inflow: { type: integer }
+        outflow: { type: integer }
+        closing_stock: { type: integer }
+    Reconciliation:
+      type: object
+      required: [opening_stock, inflow, outflow, adjustments, closing_stock, balanced]
+      properties:
+        opening_stock: { type: integer, description: Stock à la veille de `from`. }
+        inflow: { type: integer }
+        outflow: { type: integer }
+        adjustments: { type: integer, description: Ajustements justifiés (0 à ce jour). }
+        closing_stock: { type: integer }
+        balanced: { type: boolean }
+    ActivityReport:
+      description: Rapport d'activité et rapprochement du stock (ReportService::activity).
+      allOf:
+        - $ref: '#/components/schemas/Reconciliation'
+        - type: object
+          required: [by_month, by_agency, by_entity, by_channel, by_category, by_decision, late_open, late_closed, meta, validated_by, validated_at, validation]
+          properties:
+            validated_by:
+              description: Validateur de la dernière validation correspondant à la période et aux filtres.
+              oneOf:
+                - $ref: '#/components/schemas/IdName'
+                - type: 'null'
+            validated_at: { $ref: '#/components/schemas/NullableDateTime' }
+            validation:
+              oneOf:
+                - type: object
+                  required: [id, comment, rule_version, as_of, snapshot]
+                  properties:
+                    id: { type: integer }
+                    comment: { type: [string, 'null'] }
+                    rule_version: { type: [string, 'null'] }
+                    as_of: { type: [string, 'null'], format: date }
+                    snapshot: { $ref: '#/components/schemas/Reconciliation' }
+                - type: 'null'
+            by_month:
+              type: array
+              items:
+                allOf:
+                  - type: object
+                    required: [month, from, to]
+                    properties:
+                      month: { type: string, example: 2026-04 }
+                      from: { type: string, format: date }
+                      to: { type: string, format: date }
+                  - $ref: '#/components/schemas/Reconciliation'
+            by_agency:
+              type: array
+              items: { $ref: '#/components/schemas/FlowRow' }
+            by_entity:
+              type: array
+              items: { $ref: '#/components/schemas/FlowRow' }
+            by_channel:
+              type: array
+              items: { $ref: '#/components/schemas/FlowRow' }
+            by_category:
+              type: array
+              items: { $ref: '#/components/schemas/FlowRow' }
+            by_decision:
+              type: array
+              items:
+                type: object
+                required: [decision, label, count]
+                properties:
+                  decision:
+                    oneOf:
+                      - $ref: '#/components/schemas/Decision'
+                      - type: 'null'
+                  label: { type: string }
+                  count: { type: integer }
+            late_open: { type: integer }
+            late_closed: { type: integer }
+            meta:
+              allOf:
+                - $ref: '#/components/schemas/KpiMeta'
+                - type: object
+                  required: [formula]
+                  properties:
+                    formula: { type: string }
+
+    ReportValidation:
+      type: object
+      description: Validation d'un rapport d'activité (instantané du rapprochement).
+      required: [id, type, from, to, as_of, filters, rule_version, snapshot, comment, validated_by, validated_at]
+      properties:
+        id: { type: integer }
+        type: { type: string, const: activity }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        as_of: { type: string, format: date }
+        filters:
+          description: Filtres de dimension non vides (objet, ou `[]` si aucun).
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              maxItems: 0
+        rule_version: { type: [string, 'null'] }
+        snapshot: { $ref: '#/components/schemas/Reconciliation' }
+        comment: { type: [string, 'null'] }
+        validated_by: { $ref: '#/components/schemas/IdName' }
+        validated_at: { $ref: '#/components/schemas/NullableDateTime' }
+
+    # ---------------------------------------------------------- Qualité
+    QualityAction:
+      type: object
+      description: Action du plan qualité (QualityActionResource).
+      required: [id, title, root_cause, category, owner, owner_entity, due_at, status, status_label, effectiveness_measure, evidence, completed_at, complaints, complaints_count, created_at]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        root_cause: { type: string }
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/IdLabel'
+            - type: 'null'
+        owner:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        owner_entity:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        due_at: { $ref: '#/components/schemas/NullableDateTime' }
+        status: { $ref: '#/components/schemas/QualityActionStatus' }
+        status_label: { type: string }
+        effectiveness_measure: { type: [string, 'null'] }
+        evidence: { type: [string, 'null'] }
+        completed_at: { $ref: '#/components/schemas/NullableDateTime' }
+        complaints:
+          type: array
+          items:
+            type: object
+            required: [id, reference]
+            properties:
+              id: { type: integer }
+              reference: { $ref: '#/components/schemas/Reference' }
+        complaints_count: { type: integer }
+        created_at: { $ref: '#/components/schemas/NullableDateTime' }
+    QualityActionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/QualityAction' }
+    QualityActionInput:
+      type: object
+      description: '`title` et `root_cause` obligatoires à la création.'
+      properties:
+        title: { type: string, minLength: 3, maxLength: 190 }
+        root_cause: { type: string, minLength: 3, maxLength: 5000 }
+        category_id: { type: [integer, 'null'] }
+        owner_id: { type: [integer, 'null'] }
+        owner_entity_id: { type: [integer, 'null'] }
+        due_at: { type: [string, 'null'], format: date-time, description: Date ou date-heure. }
+        status: { $ref: '#/components/schemas/QualityActionStatus' }
+        effectiveness_measure: { type: [string, 'null'], maxLength: 5000 }
+        evidence: { type: [string, 'null'], maxLength: 5000 }
+        complaint_ids:
+          type: array
+          maxItems: 200
+          items: { type: integer }
+    RecurringGroup:
+      type: object
+      required: [category, category_id, product, product_id, count, late_count, reopened_count]
+      properties:
+        category: { type: string, description: '« Non qualifiée » si absente.' }
+        category_id: { type: [integer, 'null'] }
+        product: { type: string, description: '« Non renseigné » si absent.' }
+        product_id: { type: [integer, 'null'] }
+        count: { type: integer }
+        late_count: { type: integer }
+        reopened_count: { type: integer }
+
+    # ---------------------------------------------------------- Admin
+    DeadlineRule:
+      type: object
+      description: Règle de délai versionnée (DeadlineRuleResource). Une règle validée est immuable.
+      required: [id, code, label, kind, kind_label, unit, unit_label, duration, start_point, source_type, source_type_label, source_reference, effective_from, effective_to, version, status, status_label, is_demo, validated_by, validated_at, notes]
+      properties:
+        id: { type: integer }
+        code: { type: string, example: REP_FINALE }
+        label: { type: string }
+        kind: { $ref: '#/components/schemas/DeadlineKind' }
+        kind_label: { type: string }
+        unit: { $ref: '#/components/schemas/DeadlineUnit' }
+        unit_label: { type: string }
+        duration: { type: integer, minimum: 0, maximum: 365 }
+        start_point: { type: string, example: received_at }
+        source_type: { $ref: '#/components/schemas/RuleSourceType' }
+        source_type_label: { type: string }
+        source_reference: { type: string }
+        effective_from: { type: [string, 'null'], format: date }
+        effective_to: { type: [string, 'null'], format: date }
+        version: { type: integer }
+        status: { $ref: '#/components/schemas/RuleStatus' }
+        status_label: { type: string }
+        is_demo: { type: boolean }
+        validated_by:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        validated_at: { $ref: '#/components/schemas/NullableDateTime' }
+        notes: { type: [string, 'null'] }
+    DeadlineRuleEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/DeadlineRule' }
+    DeadlineRuleInput:
+      type: object
+      description: 'Obligatoires à la création : code, label, kind, unit, duration, source_type, source_reference, effective_from.'
+      properties:
+        code: { type: string, maxLength: 40, pattern: '^[A-Z0-9_-]+$' }
+        label: { type: string, maxLength: 190 }
+        kind: { $ref: '#/components/schemas/DeadlineKind' }
+        unit: { $ref: '#/components/schemas/DeadlineUnit' }
+        duration: { type: integer, minimum: 0, maximum: 365 }
+        source_type: { $ref: '#/components/schemas/RuleSourceType' }
+        source_reference: { type: string, maxLength: 255 }
+        effective_from: { type: string, format: date }
+        effective_to: { type: [string, 'null'], format: date, description: '≥ effective_from.' }
+        status:
+          type: string
+          enum: [brouillon, a_valider, retire]
+          description: '`valide` uniquement via POST /admin/deadline-rules/{rule}/validate.'
+        notes: { type: [string, 'null'], maxLength: 2000 }
+    AuditLogEntry:
+      type: object
+      required: [id, date, user, action, auditable_type, auditable_id, before, after, reason, ip, user_agent]
+      properties:
+        id: { type: integer }
+        date: { $ref: '#/components/schemas/NullableDateTime' }
+        user:
+          oneOf:
+            - type: object
+              required: [id, name, email]
+              properties:
+                id: { type: integer }
+                name: { type: string }
+                email: { type: string }
+            - type: 'null'
+        action: { type: string, example: complaint.view }
+        auditable_type: { type: [string, 'null'], example: Complaint }
+        auditable_id: { type: [integer, 'null'] }
+        before: { type: [object, 'null'], additionalProperties: true }
+        after: { type: [object, 'null'], additionalProperties: true }
+        reason: { type: [string, 'null'] }
+        ip: { type: [string, 'null'] }
+        user_agent: { type: [string, 'null'] }
+    ImportBatch:
+      type: object
+      description: Lot d'import CSV historique (ImportBatchResource).
+      required: [id, filename, file_sha256, source_system, status, status_label, rows_total, rows_created, rows_skipped, rows_anomalies, report, imported_by, created_at]
+      properties:
+        id: { type: integer }
+        filename: { type: string }
+        file_sha256: { type: string }
+        source_system: { type: string }
+        status: { $ref: '#/components/schemas/ImportStatus' }
+        status_label: { type: string }
+        rows_total: { type: integer }
+        rows_created: { type: integer }
+        rows_skipped: { type: integer }
+        rows_anomalies: { type: integer }
+        report: { description: Rapport libre (JSON ou texte selon le stockage). }
+        imported_by:
+          oneOf:
+            - $ref: '#/components/schemas/IdName'
+            - type: 'null'
+        created_at: { $ref: '#/components/schemas/NullableDateTime' }
+    ImportBatchDetail:
+      allOf:
+        - $ref: '#/components/schemas/ImportBatch'
+        - type: object
+          required: [anomalies]
+          properties:
+            anomalies:
+              type: array
+              items:
+                type: object
+                required: [id, row_number, source_id, issue, raw, resolution_status, resolution_status_label, resolved_at]
+                properties:
+                  id: { type: integer }
+                  row_number: { type: integer }
+                  source_id: { type: [string, 'null'] }
+                  issue: { type: string }
+                  raw: { description: Ligne brute du CSV. }
+                  resolution_status: { $ref: '#/components/schemas/AnomalyResolution' }
+                  resolution_status_label: { type: string }
+                  resolved_at: { $ref: '#/components/schemas/NullableDateTime' }
+    ImportResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: '#/components/schemas/ImportBatchDetail' }
+        meta:
+          type: object
+          required: [already_imported, message]
+          properties:
+            already_imported: { type: boolean }
+            message: { type: string }
+
+    # ---------------------------------------------------------- Référentiels administrables
+    Timestamps:
+      type: object
+      properties:
+        created_at: { $ref: '#/components/schemas/NullableDateTime' }
+        updated_at: { $ref: '#/components/schemas/NullableDateTime' }
+    Agency:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          required: [id, code, name, city, is_active]
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            name: { type: string }
+            city: { type: string }
+            is_active: { type: boolean }
+    ProcessingEntity:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          required: [id, code, name, is_active]
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            name: { type: string }
+            is_active: { type: boolean }
+    Category:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          required: [id, code, label, is_active, version]
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            label: { type: string }
+            description: { type: [string, 'null'] }
+            is_active: { type: boolean }
+            version: { type: integer }
+    Product:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          required: [id, code, label, is_active]
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            label: { type: string }
+            is_active: { type: boolean }
+    ResponseTemplate:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          required: [id, code, kind, label, subject, body, version, is_active]
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            kind: { $ref: '#/components/schemas/TemplateKind' }
+            label: { type: string }
+            subject: { type: string }
+            body: { type: string }
+            version: { type: integer }
+            is_active: { type: boolean }
+    Holiday:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          required: [id, date, label, calendar_version, country]
+          properties:
+            id: { type: integer }
+            date: { type: string, format: date }
+            label: { type: string }
+            calendar_version: { type: string }
+            country: { type: string, example: CG }
+    ReferentialItem:
+      description: Élément de référentiel, selon `type`.
+      oneOf:
+        - $ref: '#/components/schemas/Agency'
+        - $ref: '#/components/schemas/ProcessingEntity'
+        - $ref: '#/components/schemas/Category'
+        - $ref: '#/components/schemas/Product'
+        - $ref: '#/components/schemas/ResponseTemplate'
+        - $ref: '#/components/schemas/Holiday'
+    ReferentialItemEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ReferentialItem' }
+    AgencyInput:
+      type: object
+      description: 'type = agencies. Obligatoires en création : code, name, city.'
+      properties:
+        code: { type: string, maxLength: 40, pattern: '^[A-Za-z0-9_-]+$', description: Unique. }
+        name: { type: string, maxLength: 150 }
+        city: { type: string, maxLength: 100 }
+        is_active: { type: boolean }
+    EntityInput:
+      type: object
+      description: 'type = entities. Obligatoires en création : code, name.'
+      properties:
+        code: { type: string, maxLength: 40, pattern: '^[A-Za-z0-9_-]+$', description: Unique. }
+        name: { type: string, maxLength: 150 }
+        is_active: { type: boolean }
+    CategoryInput:
+      type: object
+      description: 'type = categories. Obligatoires en création : code, label.'
+      properties:
+        code: { type: string, maxLength: 40, pattern: '^[A-Za-z0-9_-]+$', description: Unique. }
+        label: { type: string, maxLength: 150 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+        is_active: { type: boolean }
+    ProductInput:
+      type: object
+      description: 'type = products. Obligatoires en création : code, label.'
+      properties:
+        code: { type: string, maxLength: 40, pattern: '^[A-Za-z0-9_-]+$', description: Unique. }
+        label: { type: string, maxLength: 150 }
+        is_active: { type: boolean }
+    TemplateInput:
+      type: object
+      description: 'type = templates. Obligatoires en création : code, kind, label, subject, body.'
+      properties:
+        code: { type: string, maxLength: 40, pattern: '^[A-Za-z0-9_-]+$' }
+        kind: { $ref: '#/components/schemas/TemplateKind' }
+        label: { type: string, maxLength: 150 }
+        subject: { type: string, maxLength: 190 }
+        body: { type: string, maxLength: 10000 }
+        is_active: { type: boolean }
+    HolidayInput:
+      type: object
+      description: 'type = holidays. Obligatoires en création : date, label, calendar_version.'
+      properties:
+        date: { type: string, format: date }
+        label: { type: string, maxLength: 150 }
+        calendar_version: { type: string, maxLength: 30, pattern: '^[A-Za-z0-9_.-]+$' }
+    ReferentialInput:
+      description: Corps selon le `type` de chemin (les champs inconnus du type sont ignorés).
+      oneOf:
+        - $ref: '#/components/schemas/AgencyInput'
+        - $ref: '#/components/schemas/EntityInput'
+        - $ref: '#/components/schemas/CategoryInput'
+        - $ref: '#/components/schemas/ProductInput'
+        - $ref: '#/components/schemas/TemplateInput'
+        - $ref: '#/components/schemas/HolidayInput'

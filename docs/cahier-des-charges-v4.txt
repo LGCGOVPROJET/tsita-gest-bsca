@@ -1,0 +1,427 @@
+TSITA GEST pour BSCA Bank Cahier des charges
+de la refonte
+Version 4 | 28 septembre 2026 | Cadrage fonctionnel, technique et graphique
+
+
+
+Synthèse du projet
+TSITA GEST est une plateforme de gestion des réclamations qui doit être adaptée à l'identité de BSCA Bank,
+Banque Sino-Congolaise pour l'Afrique. Elle relie le dépôt multicanal d'une réclamation, son instruction par les
+équipes, la recherche d'une solution, la réponse au client et la mesure des problèmes récurrents. L'interface de
+BSCA utilisera les couleurs et le logo transmis : rouge de marque, bleu institutionnel et blanc.
+
+La refonte proposée vise une application opérationnelle et auditable. Le tableau de bord montre séparément
+les réclamations reçues dans une période, les réponses envoyées dans une période et le stock encore ouvert à
+une date. Chaque dossier garde sa chronologie, son responsable, ses justificatifs, ses échanges et sa décision.
+Les échéances et règles de conformité de BSCA seront configurées après validation par la banque.
+
+
+1 Périmètre et sources
+ Source                                     Ce qui est retenu                            Limite
+
+                                            Nom, monogramme circulaire B, rouge          Les couleurs ci-dessous sont relevées
+ Trois logos BSCA Bank transmis             dominant, filets bleus, signature «          visuellement sur les images ; confirmer
+                                            Banque Sino-Congolaise pour l'Afrique »      les codes officiels auprès de BSCA.
+
+                                            Modules, parcours de résolution,
+                                                                                         Son précédent contexte bancaire et ses
+ Cahier TSITA GEST V3                       architecture des indicateurs, sécurité et
+                                                                                         chiffres BCI ne décrivent pas BSCA.
+                                            plan de recette
+
+                                            Exemples de reporting, filtres, qualité      Aucun chiffre, statut, catégorie ou
+ Rapport annuel, tableau de bord et
+                                            des données et suivi des délais              processus interne provenant de ces
+ tutoriel précédemment étudiés
+                                            applicables comme besoins génériques         fichiers n'est attribué à BSCA.
+
+                                            Nécessité pour les établissements            Examiner les textes et procédures
+ Rapport annuel COBAC 2024 publié par
+                                            assujettis d'un dispositif de réclamations   effectivement applicables à BSCA avec la
+ la BEAC
+                                            accessible, documenté et fonctionnel         conformité.
+
+
+L'existant BSCA, ses outils de saisie, ses bases de données, son organigramme, ses volumes, ses délais internes
+et ses modèles de correspondance doivent faire l'objet d'un atelier de découverte avant migration. Aucune
+connexion ou extraction de données BSCA n'est présumée dans ce document.
+
+
+
+
+                                                                         TSITA GEST pour BSCA Bank | Cahier des charges V4 | 1
+2 Identité graphique et règles de marque
+ Jeton                                          Couleur indicative                         Usage
+
+                                                                                           Actions principales, onglet actif, boutons
+ Rouge BSCA                                     #D9132C                                    de confirmation, liens majeurs, accent de
+                                                                                           marque.
+
+                                                                                           Survol des boutons, éléments de premier
+ Rouge profond                                  #A60E22
+                                                                                           plan sur fond clair.
+
+                                                                                           Navigation secondaire, en-têtes, liens
+ Bleu BSCA                                      #0B509A
+                                                                                           informatifs et graphiques neutres.
+
+                                                                                           Texte d'interface à fort contraste et
+ Bleu nuit                                      #12395E
+                                                                                           navigation sombre.
+
+ Blanc                                          #FFFFFF                                    Fonds de cartes et version claire du logo.
+
+                                                                                           Arrière-plan des pages ; #DDE4EC pour
+ Gris de fond                                   #F5F7FA
+                                                                                           les bordures.
+
+                                                                                           Corps de texte ; #5A6B7B pour
+ Texte                                          #172637
+                                                                                           l'information secondaire.
+
+                                                                                           Échéance proche, validation en attente ;
+ Attention                                      #AF6500 sur fond #FFF3DE                   ne représente pas une couleur de
+                                                                                           marque.
+
+                                                                                           Retard, action bloquée, erreur ; toujours
+ Erreur                                         #B42332 sur fond #FCEAED
+                                                                                           accompagnée d'un libellé.
+
+                                                                                           Dossier répondu ou action terminée ;
+ Succès                                         #11734D sur fond #E9F6EF
+                                                                                           couleur fonctionnelle.
+
+
+La version officielle du logo avec signature apparaît sur la connexion, l'accueil et les documents sortants, dans
+un espace calme et dégagé. Le pictogramme rond B sert aux écrans compacts et au favicon. Ne pas recolorier ni
+déformer le logo transmis. Sur un fond rouge ou bleu, utiliser une version blanche fournie ou validée par BSCA
+; ne pas inverser arbitrairement les couleurs d'origine. Le rouge de marque ne signifie pas à lui seul « en retard
+» : les états sont distingués par un mot, une forme et une icône. Une validation des contrastes et des tailles
+minimales du logo fait partie de la recette visuelle.
+
+Typographie recommandée : Manrope ou Inter pour l'interface, Arial en police de secours. Titres de 28 à 36 px,
+texte de 15 à 16 px, petites informations à 13 px au minimum. Espacement fondé sur des pas de 8 px ; cartes de
+12 à 16 px de rayon. Le design doit rester lisible à 200 % de zoom et utilisable au clavier et sur téléphone.
+
+
+3 Publics et droits
+ Profil                                                              Opérations principales
+
+                                                                     Déposer, compléter et suivre sa propre réclamation ; consulter
+ Client ou mandataire habilité                                       les messages destinés au client ; répondre et demander une
+                                                                     réouverture.
+
+                                                                     Enregistrer un dossier reçu oralement ou par un autre canal,
+ Agent d'accueil, agence ou centre de contact                        vérifier les coordonnées, accuser réception, joindre des
+                                                                     éléments.
+
+                                                                     Examiner les faits, solliciter une entité, documenter la cause,
+ Gestionnaire
+                                                                     proposer une solution et préparer la réponse.
+
+
+                                                                           TSITA GEST pour BSCA Bank | Cahier des charges V4 | 2
+ Profil                                                           Opérations principales
+
+                                                                  Affecter, réattribuer, escalader et approuver les solutions dans
+ Responsable de traitement
+                                                                  son périmètre.
+
+                                                                  Contrôler les réponses, repérer les causes récurrentes et suivre
+ Qualité et service client
+                                                                  les actions correctives.
+
+                                                                  Définir et vérifier les règles applicables, consulter les preuves,
+ Conformité et contrôle interne
+                                                                  valider les rapports et les dépassements.
+
+                                                                  Consulter les tendances, stocks, délais et actions, sans accès
+ Direction
+                                                                  automatique à toutes les pièces nominatives.
+
+                                                                  Gérer référentiels, comptes, calendriers, droits et intégrations
+ Administrateur fonctionnel et technique
+                                                                  selon séparation des responsabilités.
+
+
+Le contrôle d'accès tient compte du rôle et du périmètre d'agence ou d'entité. Chaque consultation et export de
+données sensibles est journalisé. Le portail client n'affiche jamais les notes internes, identifiants de tiers ni avis
+de contrôle.
+
+
+4 Parcours complet du dossier
+1. Réception : portail client, agence, téléphone, courriel, courrier ou canal que BSCA validera. Le dossier reçoit
+   une référence unique non signifiante.
+2. Accusé de réception : message daté, canal et preuve d'envoi. Un échec de distribution reste visible.
+3. Qualification : nature, produit, agence de réception, fonction responsable, urgence, montant et devise si
+   pertinents, recherche de doublons.
+4. Affectation : propriétaire unique, suppléance, tâches et échéances ; l'agence de dépôt et la fonction qui résout
+   le problème restent deux champs distincts.
+5. Investigation : chronologie, pièces, demandes complémentaires, échanges client séparés des notes internes,
+   cause provisoire et validation.
+6. Solution : remboursement, correction d'opération, explication motivée, autre mesure ou décision de non
+   fondement ; les options sont configurées par BSCA.
+7. Réponse et clôture : approbation si requise, transmission au client, preuve d'envoi, décision de fond et
+   résultat enregistrés séparément.
+8. Suite éventuelle : contestation, réouverture et médiation selon procédure validée ; l'ancien dossier et sa
+   réponse initiale restent consultables.
+États proposés : brouillon, reçu, à qualifier, affecté, en investigation, attente d'information, solution proposée, à
+valider, réponse envoyée, clôturé, réouvert. Une décision « fondée », « partiellement fondée », « non fondée »
+ou « irrecevable motivée » ne remplace pas l'état du traitement. Les transitions sont horodatées et motivées ;
+les suppressions de dossiers après dépôt ne sont pas offertes aux profils métier.
+
+
+5 Modules à construire
+ Module                                    Exigences détaillées                          Priorité
+
+                                           Authentification sécurisée,
+                                           réinitialisation, MFA pour profils
+ Identité et connexion                                                                   P1
+                                           sensibles, session contrôlée, droits par
+                                           rôle et périmètre.
+
+
+                                                                         TSITA GEST pour BSCA Bank | Cahier des charges V4 | 3
+Module                       Exigences détaillées                            Priorité
+
+                             Formulaire mobile progressif,
+                             consentement, pièces, confirmation et
+Dépôt client                                                                 P1
+                             référence, aide sur les étapes du
+                             traitement.
+
+                             Saisie par agent, canal d'origine, agence,
+                             date effective, coordonnées,
+Saisie omnicanale                                                            P1
+                             rattachement possible à un client
+                             existant.
+
+                             Catégories, produits, agences, entités,
+Référentiel                  calendriers, modèles et motifs                  P1
+                             administrables et versionnés.
+
+                             Complétude, risque, suspicion de
+Qualification                doublon, typologie et réorientation avec        P1
+                             piste d'audit.
+
+                             Attribution, propriétaire, tâches, vues
+File de travail              par priorité, échéance et service,              P1
+                             notifications.
+
+                             Vue unifiée des faits, échéances, pièces,
+Dossier et chronologie       interactions, montants, validations et          P1
+                             historique de changements.
+
+                             Collecte de preuves, cause racine,
+                             décision motivée, montant restitué
+Investigation et solutions                                                   P1
+                             éventuel, validation à deux niveaux
+                             selon règle.
+
+                             Modèles d'accusé, attente, réponse et
+Communications               clôture ; messages sécurisés ; preuves et       P1
+                             échecs d'envoi.
+
+                             Calcul des échéances selon calendrier
+Délais et escalades          validé, alertes avant et après échéance,        P1
+                             escalades et justification.
+
+                             Statut simplifié, nouveaux documents,
+Suivi client                 messages, réponse et contestation avec          P2
+                             vérification d'identité.
+
+                             Flux entrants et sortants, stock, dossiers
+Tableaux de bord             à risque, délais, causes, canaux, agences       P1
+                             et entités ; filtres cohérents.
+
+                             Contrôles, constats, causes récurrentes,
+Qualité et plans d'action    propriétaire d'action, échéance et              P2
+                             mesure d'efficacité.
+
+                             États périodiques, rapprochement,
+Rapports                     version des règles, validation et exports       P1
+                             PDF, Excel et CSV selon droits.
+
+                             Paramétrage, journaux, rétention,
+Administration et audit      sauvegardes, supervision des imports et         P1
+                             historique des règles.
+
+
+
+
+                                                               TSITA GEST pour BSCA Bank | Cahier des charges V4 | 4
+6 Écrans et maquettes à produire
+ Page                                                     Contenu et comportement attendu
+
+                                                          Logo officiel, accès client et collaborateur distincts,
+ Connexion BSCA
+                                                          récupération d'accès, aide et messages d'erreur discrets.
+
+                                                          Quatre indicateurs définis, période et périmètre apparents,
+ Accueil superviseur
+                                                          évolution, motif dominant, alertes et dernières actions.
+
+                                                          Recherche par référence, filtres agence de réception et entité
+ Liste des réclamations
+                                                          de traitement, état, nature, date et retard ; tri et export.
+
+                                                          Bandeau avec référence, statut, propriétaire et échéance ;
+ Détail du dossier                                        chronologie ; onglets faits, pièces, échanges, solution, contrôle
+                                                          et audit.
+
+                                                          Étapes identité, objet, faits, pièces, vérification puis
+ Dépôt client
+                                                          confirmation avec numéro de suivi.
+
+                                                          État compréhensible, dates des messages et prochaines étapes,
+ Suivi client
+                                                          téléversement sécurisé, réponse définitive.
+
+                                                          Files « à échéance », « en retard » et « clos en retard »,
+ Délais
+                                                          calendrier, vue responsable et preuve d'escalade.
+
+                                                          Proposition, cause, montant et devise, décision, approbations
+ Solutions et validations
+                                                          et modèle de réponse.
+
+                                                          Réclamations répétées, analyses de cause, responsables,
+ Qualité et actions
+                                                          échéances et contrôles d'efficacité.
+
+                                                          Filtres, définitions, rapprochement, export contrôlé,
+ Rapports et administration
+                                                          référentiels, rôles, modèles et calendrier.
+
+
+Sur ordinateur, la navigation comporte une barre latérale bleu nuit, un bandeau clair portant le logo BSCA et
+des boutons rouges. Sur mobile, les actions principales restent visibles et les tableaux disposent d'une
+présentation en cartes. Les indicateurs réglementaires sont affichés avec leur définition accessible ; chaque
+graphique possède également un résumé textuel.
+
+
+7 Indicateurs et règles de calcul
+ Indicateur                                               Définition proposée
+
+                                                          Références uniques dont la date de réception se situe dans la
+ Réclamations reçues sur une période
+                                                          période et correspond aux filtres actifs.
+
+                                                          Références uniques dont la date de réponse finale se situe dans
+ Réponses envoyées sur une période
+                                                          la période.
+
+                                                          Dossiers reçus dans la période et ayant reçu une réponse finale
+ Cohorte reçue puis traitée
+                                                          avant la date de calcul ; afficher cette date.
+
+                                                          Dossiers reçus jusqu'à D sans réponse finale jusqu'à D, suivant
+ Stock à la date D
+                                                          la règle validée pour les réouvertures.
+
+                                                          Numérateur et dénominateur affichés : cohorte traitée sur
+ Taux de traitement                                       reçues de la cohorte, ou réponses sur bassin à traiter selon le
+                                                          rapport.
+
+                                                          Dossiers ouverts après l'échéance et dossiers dont la réponse
+ Retard ouvert et retard clos
+                                                          est partie après échéance ; deux nombres distincts.
+
+
+
+
+                                                                TSITA GEST pour BSCA Bank | Cahier des charges V4 | 5
+ Indicateur                                                  Définition proposée
+
+                                                             Dates de départ et fin, fuseau Africa/Brazzaville, calendrier
+ Délai calendaire et délai ouvré
+                                                             férié, inclusivité et règle versionnée visibles.
+
+                                                             Décision de fond, solution appliquée, montant et devise
+ Résolution et satisfaction
+                                                             éventuels, acceptation ou contestation du client.
+
+
+La règle de stock vérifiable est stock de début + entrées − réponses finales ± ajustements justifiés = stock de fin.
+Les tableaux et exports doivent partager période, agence de réception, fonction de traitement, produit, nature,
+canal, statut et date de calcul. Les graphiques ne reprennent pas les chiffres du précédent établissement ; les
+données BSCA seront connectées seulement après inventaire et autorisation.
+
+
+8 Délais et conformité
+Le moteur de délais doit permettre de saisir plusieurs règles : accusé de réception, réponse finale, alertes
+internes, délais de contrôle et éventuels régimes particuliers. Chaque règle comprend sa source juridique ou
+interne, sa date d'effet, son unité, son point de départ, son calendrier et les exceptions approuvées. Le compte à
+rebours ne s'arrête pas automatiquement lorsqu'un agent attend une pièce. Une réponse d'attente et la
+nouvelle date annoncée au client restent distinctes de l'échéance initiale.
+
+La page institutionnelle d'une autre banque évoquait dix jours ouvrables pour l'accusé et 45 jours pour la
+réponse ; ces chiffres ne sont pas définis ici comme engagement BSCA. La conformité BSCA doit confirmer les
+textes et procédures applicables avant qu'un seuil ne soit activé en production. Le dispositif doit être
+accessible, documenté et fonctionnel, conformément au cadre de supervision décrit par la COBAC dans son
+rapport annuel 2024.
+
+
+9 Données, sécurité et intégrations
+Entités minimales : client, réclamation, canal, agence de réception, entité de traitement, qualification,
+événement, tâche, pièce, échange, affectation, échéance, décision, solution, contrôle, cause, action corrective,
+export et journal d'audit. La référence publique ne révèle ni numéro de compte ni identité. Les montants
+absents restent inconnus et non égaux à zéro ; toutes les valeurs monétaires portent une devise. Une pièce a un
+type, une empreinte, une taille, un propriétaire et une classification.
+
+L'application chiffre les communications, restreint les pièces, analyse les fichiers entrants, protège les API,
+limite les tentatives de connexion, journalise les actions et teste les sauvegardes. Les environnements de
+démonstration utilisent des dossiers fictifs. Les objectifs de disponibilité, résidence, conservation et reprise
+d'activité seront déterminés avec BSCA. Les intégrations éventuelles avec banque en ligne, messagerie,
+annuaire et système central nécessitent chacune une validation de sécurité et une spécification API.
+
+Une architecture indicative utilise React, TypeScript et Vite pour l'interface, Laravel pour les services, MySQL
+pour la base relationnelle et une API JSON versionnée. Les versions, l'hébergement et les exigences de sécurité
+de BSCA prévalent au choix final. Les règles d'accès et de calcul sont exécutées côté serveur, et l'interface ne
+peut pas les contourner.
+
+
+10 Reprise de l'existant et étapes
+Lot 0, découverte : obtenir la cartographie de l'outil actuel BSCA, des canaux, catégories, volumes, historiques,
+propriétaires et règles. Produire un dictionnaire source-cible et identifier les écarts. Lot 1, socle : connexion,
+rôles, référentiels, dépôt et dossier audité. Lot 2, traitement : affectation, enquête, solutions, validations,
+                                                                   TSITA GEST pour BSCA Bank | Cahier des charges V4 | 6
+communications et échéances. Lot 3, pilotage : tableaux de bord, qualité, rapports et exports. Lot 4, migration
+et lancement : essai d'import, rapprochement, recette, formation, sauvegarde et plan de retour arrière.
+
+La migration doit être idempotente : un même fichier importé deux fois ne crée pas de doubles dossiers.
+Conserver identifiants et libellés sources, dates et fuseaux, documents et historique quand ils existent. Tout
+dossier impossible à interpréter est signalé pour décision humaine. Comparer les totaux par mois, agence,
+canal et statut aux rapports BSCA remis lors du cadrage.
+
+
+11 Critères de recette
+1. Un dossier déposé reçoit une référence, un accusé traçable et un propriétaire après attribution.
+2. Un agent ne voit que ses dossiers autorisés ; le client ne voit ni notes internes ni pièces d'autres clients.
+3. Le stock à deux dates se reconstitue depuis les entrées, réponses et ajustements documentés.
+4. Les flux par date de réception et par date de réponse donnent deux résultats distincts quand les dossiers
+   franchissent une fin de période.
+5. Les calculs passent les cas de fin de mois, jour férié, réponse le jour même, échec d'envoi, doublon et
+   réouverture.
+6. Les seuils réglementaires ne sont disponibles en production qu'après validation et versionnement de leur
+   source par BSCA.
+7. Le rapport exporté garde période, filtres, date de calcul, formule, version de règle et responsable de
+   validation.
+8. Les pages respectent la palette validée, reproduisent les logos sans déformation, restent lisibles au clavier et
+   sur téléphone.
+9. Les imports de reprise sont rapprochés de l'existant et les écarts ont un statut de résolution.
+
+
+12 Livrables et décisions à obtenir
+Livrables : spécifications détaillées, maquettes responsive BSCA, fichiers graphiques et jetons de design validés,
+schéma de données, API documentée, application et tests, plan de migration, guides utilisateurs, rapport de
+sécurité et dossier d'exploitation. Les décisions requises sont la validation officielle des couleurs et variantes du
+logo, des règles de délai, des flux et rôles BSCA, des sources de données, des intégrations, de l'hébergement et
+du format de reporting. Une maquette brandée BSCA doit suivre la validation de ce cahier des charges avant le
+développement complet.
+
+
+
+
+                                                                  TSITA GEST pour BSCA Bank | Cahier des charges V4 | 7
+

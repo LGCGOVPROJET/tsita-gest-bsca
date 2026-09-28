@@ -1,0 +1,85 @@
+/* Jetons de design BSCA — docs/ARCHITECTURE.md §10 (source : maquette BSCA V1 + CDC §2) */
+:root {
+  /* Marque */
+  --red: #d9132c;
+  --red-deep: #a60e22;
+  --blue: #0b509a;
+  --navy: #12395e;
+  --side: #102f50;
+  --side-hover: #274e73;
+  --side-line: #34526f;
+  --side-text: #c7d9e9;
+  --side-muted: #9fbed7;
+  --side-title: #a9c2da;
+
+  /* Neutres */
+  --ink: #172637;
+  --muted: #5a6b7b;
+  --bg: #f5f7fa;
+  --line: #dde4ec;
+  --line-soft: #e9edf2;
+  /* Bordure des champs : 3,32:1 sur blanc (WCAG 1.4.11) — docs/CHARTE-DESIGN.md §2.1 */
+  --field-line: #7d8fa3;
+  --control-line: var(--field-line);
+  --white: #ffffff;
+  --surface-alt: #f8fafc;
+
+  /* États fonctionnels (jamais la couleur seule) */
+  --warn: #af6500;
+  /* Texte ambre sur fond #FFF3DE : 5,62:1 (#AF6500 seul : 4,08:1, insuffisant) */
+  --warn-text: #8f5300;
+  --warn-ink: var(--warn-text);
+  --warn-bg: #fff3de;
+  --warn-line: #f1d7a6;
+  --danger: #b42332;
+  --danger-bg: #fceaed;
+  --danger-line: #f3c4cb;
+  --success: #11734d;
+  --success-bg: #e9f6ef;
+  --success-line: #bfe3d0;
+  --info-bg: #edf4fb;
+  --info-line: #d3e2f1;
+  --info-ink: #244d74;
+  --blue-soft: #e9f1fa;
+  --focus: #f4b841;
+  --focus-ring: #102f50; /* liseré qui garantit 3:1 autour de l'anneau ambre sur fond clair */
+
+  /* Typographie */
+  --font-title: 'Manrope', Arial, sans-serif;
+  --font-text: 'DM Sans', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --fs-xs: 0.8125rem; /* 13 px — minimum */
+  --fs-sm: 0.875rem; /* 14 px — tableaux */
+  --fs-md: 0.9375rem; /* 15 px — texte */
+  --fs-lg: 1.0625rem; /* 17 px */
+  --fs-xl: 1.375rem; /* 22 px */
+  --fs-h1: 1.875rem; /* 30 px */
+
+  /* Formes et espacements (pas de 8 px) */
+  --radius-card: 15px;
+  --radius-hero: 16px;
+  --radius-control: 9px;
+  --radius-badge: 7px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  --shadow: 0 12px 35px rgba(19, 47, 75, 0.055);
+  --shadow-pop: 0 18px 50px rgba(7, 29, 56, 0.2);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 180ms;
+
+  --sidebar-w: 252px;
+  --sidebar-w-compact: 74px;
+  --topbar-h: 74px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+  }
+}
